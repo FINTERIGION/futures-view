@@ -26,11 +26,12 @@ from .macd import Macd
 from .obv import Obv
 from .oi import Oi
 from .rsi import Rsi
+from .supertrend import SuperTrend
 
 __all__ = [
     'Indicator', 'IndicatorContext', 'Output',
     'Ma', 'Ema', 'Macd', 'Rsi', 'Bollinger', 'Atr',
-    'Kdj', 'Cci', 'Dmi', 'Donchian', 'Keltner', 'Obv', 'Oi',
+    'Kdj', 'Cci', 'Dmi', 'Donchian', 'Keltner', 'Obv', 'Oi', 'SuperTrend',
     'discover_indicators', 'load_indicator', 'load_registered_indicator', 'name_for',
 ]
 

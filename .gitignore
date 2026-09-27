@@ -27,6 +27,7 @@ strategies/*
 !strategies/rsi_mean_reversion.py
 !strategies/my_strategy.py
 !strategies/cross_sectional_momentum.py
+!strategies/super_trend_filter.py
 
 # Private indicators: same deal as strategies above
 indicators/*
@@ -45,4 +46,5 @@ indicators/*
 !indicators/keltner.py
 !indicators/obv.py
 !indicators/oi.py
+!indicators/supertrend.py
 !indicators/my_indicator.py

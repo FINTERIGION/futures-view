@@ -20,11 +20,13 @@ futures-view/
 │   ├── double_ma.py
 │   ├── rsi_mean_reversion.py
 │   ├── cross_sectional_momentum.py
+│   ├── super_trend_filter.py
 │   └── my_strategy.py
 ├── indicators/                # Chart indicators -- same deal as strategies/ -- see docs/indicator.md
 │   ├── base.py                #   Indicator / IndicatorContext / Output
 │   ├── ma.py  ema.py  bollinger.py  donchian.py  keltner.py
 │   ├── macd.py  rsi.py  kdj.py  cci.py  dmi.py  atr.py  obv.py  oi.py
+│   ├── supertrend.py
 │   └── my_indicator.py
 ├── datafeed/                  # Data pipeline
 │   ├── sources.py             #   per-exchange download & cache adapters (CZCE / SHFE / DCE)

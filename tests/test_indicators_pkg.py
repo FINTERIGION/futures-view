@@ -32,6 +32,7 @@ from indicators.base import (
 BUNDLED = (
     'ma', 'ema', 'macd', 'rsi', 'bollinger', 'atr',
     'kdj', 'cci', 'dmi', 'donchian', 'keltner', 'obv', 'oi',
+    'super_trend',
 )
 
 
@@ -204,10 +205,14 @@ def test_bundled_indicator_declares_a_valid_drawing_contract(key):
 def test_nan_is_a_leading_run_only():
     """Warmup shows up as leading NaN, which the chart draws as "no line yet".
     A hole *after* the first valid bar would be legitimate for some
-    indicators, but none of the bundled ones should have one.
+    indicators, but none of the bundled ones should have one -- except
+    SuperTrend, whose up/down series are NaN on the inactive regime so the
+    chart can colour each side without bridging the flip.
     """
     df = build_frame()
     for key in BUNDLED:
+        if key == 'super_trend':
+            continue
         cls = load_registered_indicator(key)
         for out_key, values in cls().compute(IndicatorContext(df, 'SA'), 'SA').items():
             arr = np.asarray(values, dtype='float64')
