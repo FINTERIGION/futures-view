@@ -10,6 +10,6 @@ export const sharedFormDefaults = {
   strategy: '',
   start: '2018-01-01',
   end: '2026-12-31',
-  cash: 200000,
+  cash: 100000,
   slippage: 0,
 }

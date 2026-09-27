@@ -67,7 +67,6 @@ class CrossSectionalMomentumStrategy(Strategy):
         'top_k': Int(1, 3),
         'rebalance_days': Int(1, 20),
     }
-    fixed_params = ('risk_budget', 'max_gross_margin', 'min_universe')
 
     def setup(self, ctx):
         self._next_rebalance = -1

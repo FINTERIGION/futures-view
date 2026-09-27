@@ -21,30 +21,36 @@ Two checks stop a web page you have open from driving the API through your brows
 
 ## What it does
 
-| Where | What it does |
-| --- | --- |
-| Product sidebar | Every registered product with its data coverage, a per-product download and edit, and Update All. Adding or editing a product opens a drawer with the registry form and a candlestick chart with a roll-contract overlay |
-| Main chart | The charted product's OI-weighted daily candles and roll points, the indicators ticked in the picker, and the fills and window of the run currently opened |
-| Backtest tab | Run any discovered strategy over the sidebar's universe and a date range; metric tiles, equity curve, trade log, per-symbol and per-exit-reason breakdowns. A run always uses the strategy's declared default params |
-| History tab | Past runs: open one to overlay it on the chart and refill the backtest form, or delete it |
-| Indicators | The chart toolbar's picker lists every class under `indicators/`; ticking one overlays it on the price pane or gives it a sub-pane, per the class's own declaration. Each row shows its current params, and the pencil that appears on hover edits them in place; see [Editing params](#editing-indicator-params) below and [Writing an Indicator](indicator.md) |
+
+| Where           | What it does                                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product sidebar | Every registered product with its data coverage, a per-product download and edit, and Update All. Adding or editing a product opens a drawer with the registry form and a candlestick chart with a roll-contract overlay                                                                                                                                         |
+| Main chart      | The charted product's OI-weighted daily candles and roll points, the indicators ticked in the picker, and the fills and window of the run currently opened                                                                                                                                                                                                       |
+| Backtest tab    | Run any discovered strategy over the sidebar's universe and a date range; metric tiles, equity curve, trade log, per-symbol and per-exit-reason breakdowns. The form edits exactly the params the strategy lists in `space`; the rest run at the class default. Opening a past run refills the fields with the values that run used                              |
+| History tab     | Past runs: open one to overlay it on the chart and refill the backtest form, or delete it                                                                                                                                                                                                                                                                        |
+| Indicators      | The chart toolbar's picker lists every class under `indicators/`; ticking one overlays it on the price pane or gives it a sub-pane, per the class's own declaration. Each row shows its current params, and the pencil that appears on hover edits them in place; see [Editing params](#editing-indicator-params) below and [Writing an Indicator](indicator.md) |
+
+
+
 
 ## Getting around
 
 The panel is one screen, not a set of routed pages: a chart filling the width, a product sidebar down the right, and a tabbed drawer along the bottom. Both side panels collapse, and the drawer's top edge is draggable (or resizable with the arrow keys once its handle has focus).
 
-| | |
-| --- | --- |
+
+|             |                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Product row | Click toggles it into the backtest universe (the tick box at the head of the row); double-click charts it. The charted product is always in the universe, so its box is drawn ticked and dimmed. The dot on the right is coverage — filled green fresh, amber stale, hollow never downloaded — and hovering the row reveals per-product download and edit buttons |
-| Search | `/` jumps to it from anywhere; ↑/↓ move a highlight through the matches and Enter charts the highlighted one. Escape clears the filter, then gives the keyboard back to the chart |
-| Theme | Light, dark, or follow the OS — the switch in the top bar. The choice is remembered per browser, and the charts follow it, since their colours are baked into the canvas rather than read from CSS |
-| Shortcuts | `Ctrl/⌘+B` sidebar, `Ctrl/⌘+J` bottom drawer, `Ctrl/⌘+Enter` run the backtest, `?` for the full list |
+| Search      | `/` jumps to it from anywhere; ↑/↓ move a highlight through the matches and Enter charts the highlighted one. Escape clears the filter, then gives the keyboard back to the chart                                                                                                                                                                                 |
+| Theme       | Light, dark, or follow the OS — the switch in the top bar. The choice is remembered per browser, and the charts follow it, since their colours are baked into the canvas rather than read from CSS                                                                                                                                                                |
+| Shortcuts   | `Ctrl/⌘+B` sidebar, `Ctrl/⌘+J` bottom drawer, `Ctrl/⌘+Enter` run the backtest, `?` for the full list                                                                                                                                                                                                                                                              |
+
 
 A job's progress also rides in the top bar while it runs, and a finished run or data update raises a toast — either can finish while the panel that started it is collapsed or behind another tab.
 
 ## Editing indicator params
 
-Hover a row in the indicator picker and click its pencil to edit that indicator's params. The form lists every param the class declares, except `fixed_params`, with its declared range and default under each field.
+Hover a row in the indicator picker and click its pencil to edit that indicator's params. The form lists every param the class declares in `space`, with its declared range and default under each field.
 
 **Apply** checks the values in two steps before keeping them:
 
@@ -53,7 +59,7 @@ Hover a row in the indicator picker and click its pencil to edit that indicator'
 
 Applied params are drawn at once, the row's summary turns accent-coloured, and the pane title shows the new values (`KDJ(14, 3, 3)`). Applying also ticks the row if it wasn't ticked. **Defaults** refills the form with the class's defaults, and applying them removes the override.
 
-Overrides are stored per browser (`ft.indicatorParams` in `localStorage`), and only for params that differ from the default. So if the author later changes a default in Python, it still applies wherever the user never touched that param. An override for a param the class no longer declares is ignored. If a reload narrows a range so a saved value is now refused, the chart's warning banner names the problem and offers **Reset parameters**.
+Overrides are stored per browser (`ft.indicatorParams` in `localStorage`), and only for params that differ from the default. So if the author later changes a default in Python, it still applies wherever the user never touched that param. An override for a param the class no longer lists in `space` is ignored. If a reload narrows a range so a saved value is now refused, the chart's warning banner names the problem and offers **Reset parameters**.
 
 ## Architecture
 

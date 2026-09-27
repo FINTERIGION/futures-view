@@ -13,7 +13,6 @@ class contract and ``docs/indicator.md`` for the user-facing version.
 from __future__ import annotations
 
 import inspect
-import math
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -29,15 +28,7 @@ from indicators.base import (
     value_range_json,
 )
 
-from core.params import (
-    Categorical,
-    Float,
-    Int,
-    check_constraints,
-    parse_param_value,
-    resolve_space,
-    spec_to_json,
-)
+from core.params import parse_param_value, resolve_space, spec_to_json, validated_overrides
 from core.registry import reload_package
 
 from web.barscache import cache as bars_cache
@@ -46,19 +37,11 @@ from web.serialize import jsonable
 router = APIRouter(prefix='/api', tags=['indicators'])
 
 #: Caps on the override query string. Not a security boundary on their own --
-#: ``_overrides`` bounds every *value* against the class's declared ``space``,
-#: which is what actually stops a huge period reaching TA-Lib -- but they keep
-#: a pathological URL from being parsed at all.
+#: ``validated_overrides`` bounds every *value* against the class's declared
+#: ``space``, which is what actually stops a huge period reaching TA-Lib --
+#: but they keep a pathological URL from being parsed at all.
 MAX_PARAMS = 32
 MAX_RAW = 128
-
-#: Backstop bound for a numeric param that ``resolve_space`` could not put a
-#: range on -- ``_infer_spec`` returns nothing for a non-positive int default,
-#: a ``0.0`` float, or anything listed in ``fixed_params``. Those would
-#: otherwise be the one way an unbounded number reaches TA-Lib from a URL,
-#: which is exactly what the range check exists to prevent. Deliberately loose:
-#: it is a ceiling on the absurd, not a substitute for a declared ``space``.
-ABSURD_MAGNITUDE = 1_000_000
 
 
 def _describe(key: str, cls: type) -> dict:
@@ -72,10 +55,10 @@ def _describe(key: str, cls: type) -> dict:
     try:
         space = {k: spec_to_json(v) for k, v in resolve_space(cls).items()}
         space_error = None
-    except ValueError as e:
+    except ValueError as e:  # a `space` key that is not in `params`
         space, space_error = {}, str(e)
     except Exception as e:  # noqa: BLE001 -- e.g. `space = {'period': (2, 100)}`
-        space, space_error = {}, f'{type(e).__name__}: {e}'
+        space, space_error = {}, f'{cls.__name__}.space: {type(e).__name__}: {e}'
 
     # Everything below reads attributes a user typed, so each coercion that
     # could fail on a wrong type is wrapped. The whole point of this function
@@ -95,6 +78,10 @@ def _describe(key: str, cls: type) -> dict:
         errors = describe_errors(cls)
     except Exception as e:  # noqa: BLE001
         errors = [f'{cls.__name__}: {type(e).__name__}: {e}']
+    # The picker shows `errors`, not `space_error`: without this a typo in
+    # `space` just leaves the row with no editable params and no reason.
+    if space_error:
+        errors.append(space_error)
 
     return {
         'key': key,
@@ -109,7 +96,6 @@ def _describe(key: str, cls: type) -> dict:
         'guides': _safe('guides', lambda: [float(g) for g in getattr(cls, 'guides', ()) or ()], []),
         'outputs': _safe('outputs', lambda: [output_json(o) for o in declared_outputs(cls)], []),
         'params': _safe('params', lambda: dict(getattr(cls, 'params', {}) or {}), {}),
-        'fixed_params': _safe('fixed_params', lambda: [str(p) for p in getattr(cls, 'fixed_params', ()) or ()], []),
         'space': space,
         'space_error': space_error,
         'errors': errors,
@@ -146,7 +132,6 @@ def _broken_entry(module_name: str, message: str, taken: set) -> dict:
         'guides': [],
         'outputs': [],
         'params': {},
-        'fixed_params': [],
         'space': {},
         'space_error': None,
         'errors': [message],
@@ -211,74 +196,6 @@ def reload_indicators():
 # Values
 # ---------------------------------------------------------------------
 
-def _coerce(name: str, default, spec, value):
-    """One override value, pinned to the default's type and the declared range.
-
-    The range check is the load-bearing part: ``period=99999999999`` reaching
-    ``talib.SMA`` is the only real way to hurt this process from a URL, and the
-    bound is already declared on the class as ``space``. Where a param declared
-    none, ``core.params._infer_spec`` supplies ``value/4 .. value*4``, which
-    is a perfectly sane cap for a chart request.
-    """
-    if isinstance(default, bool):
-        if not isinstance(value, bool):
-            raise HTTPException(status_code=422, detail=f'{name!r} expects true or false')
-        return value
-
-    if isinstance(spec, Categorical):
-        # Compare as strings: `parse_param_value` may have cast the token
-        # (`'12'` -> `12`) to a type the choice was not declared as. Then hand
-        # back the declared object rather than the parsed one.
-        for choice in spec.choices:
-            if str(choice) == str(value):
-                return choice
-        raise HTTPException(
-            status_code=422,
-            detail=f'{name!r} must be one of {[str(c) for c in spec.choices]}',
-        )
-
-    if isinstance(default, int):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise HTTPException(status_code=422, detail=f'{name!r} expects an integer')
-        if isinstance(value, float) and (not math.isfinite(value) or value != int(value)):
-            raise HTTPException(status_code=422, detail=f'{name!r} expects an integer')
-        value = int(value)
-    elif isinstance(default, float):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise HTTPException(status_code=422, detail=f'{name!r} expects a number')
-        value = float(value)
-        # `parse_param_value('period=1e400')` casts cleanly to inf, and
-        # `'period=nan'` to NaN; both would reach TA-Lib as a valid float.
-        if not math.isfinite(value):
-            raise HTTPException(status_code=422, detail=f'{name!r} must be a finite number')
-    elif isinstance(value, bool) or not isinstance(value, (int, float)):
-        # No numeric default to pin the type to, and not a number either: a
-        # string- or None-valued param, with nothing to bound -- unless its
-        # declared `space` is numeric, which a string cannot satisfy.
-        if isinstance(spec, (Int, Float)):
-            raise HTTPException(status_code=422, detail=f'{name!r} expects a number')
-        return value
-    elif isinstance(value, float) and not math.isfinite(value):
-        raise HTTPException(status_code=422, detail=f'{name!r} must be a finite number')
-    # Everything past here is a finite number, whatever the default's type. A
-    # number sent for a None/str default reaches `compute()` all the same --
-    # which may hand it to TA-Lib as a window -- so it gets the same bounds.
-
-    if isinstance(spec, (Int, Float)):
-        if not (spec.low <= value <= spec.high):
-            raise HTTPException(
-                status_code=422,
-                detail=f'{name}={value} is outside its declared range {spec.low}..{spec.high}',
-            )
-    elif abs(value) > ABSURD_MAGNITUDE:
-        raise HTTPException(
-            status_code=422,
-            detail=f'{name}={value} is implausibly large; declare a `space` range for it '
-                   f'if a value this size is meant to be allowed',
-        )
-    return value
-
-
 def _overrides(cls: type, raw_list: list) -> dict:
     """``['fast=12', 'slow=26']`` -> ``{'fast': 12, 'slow': 26}``, validated.
 
@@ -287,30 +204,15 @@ def _overrides(cls: type, raw_list: list) -> dict:
     how they cast a value. What differs is what happens to an *unknown* name:
     ``core.params.resolve_params`` warns and passes it through, which is
     right for an argv already running as the user, but over HTTP an unknown key
-    is a typo or a probe -- and ``self.p = {**params, **overrides}`` would land
-    it in a dict the user's ``compute()`` reads.
+    is a typo or a probe. The bounds themselves live in
+    ``core.params.validated_overrides``, shared with the backtest route.
     """
     if not raw_list:
         return {}
     if len(raw_list) > MAX_PARAMS:
         raise HTTPException(status_code=422, detail=f'At most {MAX_PARAMS} param overrides')
 
-    declared = dict(getattr(cls, 'params', {}) or {})
-    try:
-        space = resolve_space(cls)
-    except ValueError:
-        space = {}
-    except Exception as e:  # noqa: BLE001 -- a malformed declaration, not our bug
-        # Not `space = {}`: the author *tried* to bound these params, and
-        # quietly falling back to the loose `ABSURD_MAGNITUDE` backstop would
-        # accept values their declaration was meant to refuse.
-        raise HTTPException(
-            status_code=422,
-            detail=f'{cls.__name__}.space could not be read ({type(e).__name__}: {e}); '
-                   f'fix it before overriding params',
-        ) from e
-
-    out: dict = {}
+    parsed: dict = {}
     for raw in raw_list:
         if len(raw) > MAX_RAW:
             raise HTTPException(status_code=422, detail='Param override is too long')
@@ -318,39 +220,12 @@ def _overrides(cls: type, raw_list: list) -> dict:
             name, value = parse_param_value(raw)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
-        if name not in declared:
-            raise HTTPException(
-                status_code=422,
-                detail=f'{cls.__name__} has no param {name!r}; '
-                       f'it declares {sorted(declared) or "none"}',
-            )
-        spec = space.get(name)
-        # `resolve_space` passes a declared entry through unchecked, so
-        # `space = {'period': (2, 100)}` arrives here as a tuple. `_coerce`
-        # would treat that as "no range declared" and wave through anything
-        # under the loose backstop -- the author meant 2..100.
-        if spec is not None and not isinstance(spec, (Int, Float, Categorical)):
-            raise HTTPException(
-                status_code=422,
-                detail=f'{cls.__name__}.space[{name!r}] is {spec!r}, not an Int/Float/'
-                       f'Categorical; fix it before overriding {name!r}',
-            )
-        out[name] = _coerce(name, declared[name], spec, value)
+        parsed[name] = value
 
     try:
-        satisfied = check_constraints(cls, {**declared, **out})
-    except Exception as e:  # noqa: BLE001 -- the user's predicate, not our bug
-        raise HTTPException(
-            status_code=422,
-            detail=f'{cls.__name__}: one of its declared constraints raised '
-                   f'{type(e).__name__}: {e}',
-        ) from e
-    if not satisfied:
-        raise HTTPException(
-            status_code=422,
-            detail=f'{cls.__name__}: those params violate one of its declared constraints',
-        )
-    return out
+        return validated_overrides(cls, parsed)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 def _series_json(cls: type, key: str, array, n_bars: int) -> dict:

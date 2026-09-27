@@ -8,11 +8,9 @@ import { useWorkspace } from '../shell/WorkspaceContext'
  * chart immediately (via `runId`, the same field the Backtest tab's result
  * tables read) -- there is no separate results view to navigate to. It also
  * prefills the Backtest tab's form and switches to it, so reopening a past
- * run shows the strategy, window, costs, and universe that produced it --
- * the main chart follows, re-charting to that run's first symbol -- rather
- * than whatever the form and chart happened to be holding. Strategy
- * parameters are not carried over: the form no longer edits them and a
- * rerun uses the strategy's defaults (see BacktestPanel). */
+ * run shows the strategy, its parameters, window, costs, and universe that
+ * produced it -- the main chart follows, re-charting to that run's first
+ * symbol -- rather than whatever the form and chart happened to be holding. */
 export function HistoryPanel() {
   const { runId, setRunId, prefillBacktest } = useWorkspace()
   // `RunSummary.strategy` is the class name the engine ran (see
@@ -34,6 +32,7 @@ export function HistoryPanel() {
           end: run.end,
           cash: run.cash,
           slippage: run.slippage,
+          params: run.params ?? {},
         },
         run.id,
       )

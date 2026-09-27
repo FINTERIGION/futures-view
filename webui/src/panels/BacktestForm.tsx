@@ -1,10 +1,19 @@
 import { useTranslation } from 'react-i18next'
 import type { StrategyInfo } from '../api/types'
+import { editableParams, type ParamError, type ParamFieldErrors } from '../chart/indicatorParams'
 
 /** Windows worth one click. A backtest is nearly always run over "the last
  * few years", and typing two ISO dates to say so was the most repeated
  * keystroke in this form. */
 const RANGE_PRESETS = [1, 3, 5, 10]
+
+const PARAM_ERROR_KEYS: Record<ParamError, string> = {
+  required: 'workspace.paramRequired',
+  number: 'workspace.paramNotNumber',
+  integer: 'workspace.paramNotInteger',
+  range: 'workspace.paramOutOfRange',
+  choice: 'workspace.paramNotAChoice',
+}
 
 /** `YYYY-MM-DD` of `d` on the user's own calendar. Not `toISOString()`, which
  * is the UTC date: east of Greenwich that is still yesterday for the first
@@ -21,9 +30,9 @@ function isoYearRange(years: number): { start: string; end: string } {
   return { start: localIsoDate(start), end: localIsoDate(end) }
 }
 
-/** The Backtest tab's run form: which strategy, over which universe, and the
- * run's own settings (window, cash, slippage). Strategy parameters are not
- * edited here -- a run always uses the strategy's declared defaults. */
+/** The Backtest tab's run form: which strategy, that strategy's declared
+ * parameters, the universe, and the run's own settings (window, cash,
+ * slippage). */
 export function BacktestForm({
   strategies,
   strategyKey,
@@ -31,6 +40,10 @@ export function BacktestForm({
   onReloadStrategies,
   reloadingStrategies,
   canReloadStrategies,
+  paramDraft,
+  onParamDraftChange,
+  onResetParams,
+  paramErrors,
   universe,
   start,
   onStartChange,
@@ -41,6 +54,8 @@ export function BacktestForm({
   slippage,
   onSlippageChange,
   slippageValid,
+  cashValid,
+  windowValid,
 }: {
   strategies: StrategyInfo[]
   strategyKey: string
@@ -48,6 +63,10 @@ export function BacktestForm({
   onReloadStrategies: () => void
   reloadingStrategies: boolean
   canReloadStrategies: boolean
+  paramDraft: Record<string, string>
+  onParamDraftChange: (name: string, value: string) => void
+  onResetParams: () => void
+  paramErrors: ParamFieldErrors
   universe: string[]
   start: string
   onStartChange: (v: string) => void
@@ -58,11 +77,21 @@ export function BacktestForm({
   slippage: number
   onSlippageChange: (v: number) => void
   slippageValid: boolean
+  cashValid: boolean
+  windowValid: boolean
 }) {
   const { t } = useTranslation()
   // Listed, not hidden: a strategy that vanished from the dropdown the moment
   // its file stopped compiling left whoever saved it nowhere to read why.
   const broken = strategies.filter((s) => s.errors.length > 0)
+  const strategy = strategies.find((s) => s.key === strategyKey)
+  const paramNames = strategy ? editableParams(strategy) : []
+  // The class defaults, as the inputs would show them. A field the user has
+  // not touched matches; an out-of-range or half-typed value does not, so
+  // the button stays available as the way back.
+  const paramsAtDefaults =
+    strategy !== undefined &&
+    paramNames.every((name) => (paramDraft[name] ?? '') === String(strategy.params[name]))
 
   return (
     <>
@@ -97,6 +126,68 @@ export function BacktestForm({
           </div>
         )}
       </div>
+
+      {strategy && paramNames.length > 0 && (
+        <div className="form-grid">
+          {paramNames.map((name) => {
+            const spec = strategy.space[name]
+            const fallback = strategy.params[name]
+            const error = paramErrors[name]
+            const ranged = spec && spec.kind !== 'categorical' && spec.low !== undefined && spec.high !== undefined
+            const hint = ranged
+              ? t('workspace.paramHint', { low: spec.low, high: spec.high, value: String(fallback) })
+              : t('workspace.paramHintNoRange', { value: String(fallback) })
+            const choices =
+              spec?.kind === 'categorical' ? (spec.choices ?? []) : typeof fallback === 'boolean' ? [true, false] : null
+            return (
+              <div className="field" key={name}>
+                <label htmlFor={`param-${name}`}>{name}</label>
+                {choices ? (
+                  <select
+                    id={`param-${name}`}
+                    value={paramDraft[name] ?? ''}
+                    onChange={(e) => onParamDraftChange(name, e.target.value)}
+                  >
+                    {choices.map((c) => (
+                      <option key={String(c)} value={String(c)}>
+                        {String(c)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={`param-${name}`}
+                    type={typeof fallback === 'number' ? 'number' : 'text'}
+                    step={spec?.kind === 'int' ? 1 : 'any'}
+                    min={ranged ? spec.low : undefined}
+                    max={ranged ? spec.high : undefined}
+                    value={paramDraft[name] ?? ''}
+                    className={error ? 'invalid' : undefined}
+                    aria-invalid={Boolean(error)}
+                    onChange={(e) => onParamDraftChange(name, e.target.value)}
+                  />
+                )}
+                {error ? (
+                  <span className="field-error">{t(PARAM_ERROR_KEYS[error], { low: spec?.low, high: spec?.high })}</span>
+                ) : (
+                  <span className="field-hint">{hint}</span>
+                )}
+              </div>
+            )
+          })}
+          <div className="field field-wide">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              disabled={paramsAtDefaults}
+              onClick={onResetParams}
+              title={t('workspace.resetIndicatorParams')}
+            >
+              {t('workspace.resetParams')}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="field">
         <label>
@@ -146,15 +237,30 @@ export function BacktestForm({
       <div className="form-grid">
         <div className="field">
           <label>{t('common.start')}</label>
-          <input type="date" value={start} onChange={(e) => onStartChange(e.target.value)} />
+          <input
+            type="date"
+            value={start}
+            className={windowValid ? undefined : 'invalid'}
+            onChange={(e) => onStartChange(e.target.value)}
+          />
         </div>
         <div className="field">
           <label>{t('common.end')}</label>
-          <input type="date" value={end} onChange={(e) => onEndChange(e.target.value)} />
+          <input
+            type="date"
+            value={end}
+            className={windowValid ? undefined : 'invalid'}
+            onChange={(e) => onEndChange(e.target.value)}
+          />
         </div>
         <div className="field">
           <label>{t('common.cash')}</label>
-          <input type="number" value={cash} onChange={(e) => onCashChange(Number(e.target.value))} />
+          <input
+            type="number"
+            className={cashValid ? undefined : 'invalid'}
+            value={cash}
+            onChange={(e) => onCashChange(Number(e.target.value))}
+          />
         </div>
         <div className="field">
           <label>{t('common.slippage')}</label>

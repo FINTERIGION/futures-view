@@ -14,10 +14,15 @@ const HEADLINE_KEYS = [
   'final_equity',
   'turnover',
   'expectancy',
+  'n_forced_liquidations',
+  'n_rejected_orders',
 ]
 
 const PERCENT_KEYS = new Set(['total_return', 'annualized_return', 'max_drawdown', 'win_rate', 'annualized_volatility', 'capital_exposure'])
 const NEGATIVE_IS_BAD = new Set(['max_drawdown'])
+/** A positive count here is a worse run: orders the book could not fund, or a
+ * liquidation. Coloured the same way a drawdown is — red once it leaves zero. */
+const POSITIVE_IS_BAD = new Set(['n_forced_liquidations', 'n_rejected_orders'])
 
 function formatValue(key: string, value: unknown, isInf: boolean, infLabel: string, naLabel: string): string {
   if (isInf) return infLabel
@@ -39,7 +44,7 @@ export function MetricStats({ metrics, keys = HEADLINE_KEYS }: { metrics: Metric
         const isInf = Boolean(metrics[`${key}_is_inf`])
         const text = formatValue(key, raw, isInf, t('common.infinity'), t('common.na'))
         const numeric = typeof raw === 'number' ? raw : null
-        const goodDirection = NEGATIVE_IS_BAD.has(key) ? -1 : 1
+        const goodDirection = NEGATIVE_IS_BAD.has(key) || POSITIVE_IS_BAD.has(key) ? -1 : 1
         const cls =
           numeric !== null && numeric !== 0
             ? (numeric * goodDirection > 0 ? 'positive' : 'negative')

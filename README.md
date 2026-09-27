@@ -39,7 +39,7 @@ export DCE_API_KEY=...
 export DCE_SECRET=...
 ```
 
-Start the panel, then open <http://127.0.0.1:8000>.
+Start the panel, then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 ```bash
 python main.py web
@@ -54,20 +54,21 @@ python main.py data
 python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --strategy double_ma --cash 100000
 ```
 
-| Subcommand   | What it does                                                    |
-| ------------ | --------------------------------------------------------------- |
-| `data`       | Download exchange history, rebuild OI-weighted daily bars       |
-| `backtest`   | Run one strategy over a date range                              |
-| `web`        | Serve the browser panel                                         |
+| Subcommand | What it does                                              |
+| ---------- | --------------------------------------------------------- |
+| `data`     | Download exchange history, rebuild OI-weighted daily bars |
+| `backtest` | Run one strategy over a date range                        |
+| `web`      | Serve the browser panel                                   |
+
 
 ## Documentation
 
-| Page                                       | Contents                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------- |
-| [Data Pipeline](docs/data.md)              | Exchange downloads, `main.py data` flags, generated files, product registry           |
-| [Backtesting](docs/backtest.md)            | `main.py backtest` flags, four-phase execution model, outputs, metrics                |
-| [Writing a Strategy](docs/strategy.md)     | `Strategy` lifecycle, `SetupContext` / `BarContext` API, conventions                  |
-| [Writing an Indicator](docs/indicator.md)  | `Indicator` class, `Output` styling, panes and value ranges, the picker in the panel  |
-| [Web Panel](docs/web.md)                   | Browser UI for products, data, backtest, run history                                  |
-| [Project Layout](docs/architecture.md)     | Directory map, tests                                                                  |
 
+| Page                                      | Contents                                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| [Data Pipeline](docs/data.md)             | Exchange downloads, `main.py data` flags, generated files, product registry          |
+| [Backtesting](docs/backtest.md)           | `main.py backtest` flags, four-phase execution model, outputs, metrics               |
+| [Writing a Strategy](docs/strategy.md)    | `Strategy` lifecycle, `SetupContext` / `BarContext` API, conventions                 |
+| [Writing an Indicator](docs/indicator.md) | `Indicator` class, `Output` styling, panes and value ranges, the picker in the panel |
+| [Web Panel](docs/web.md)                  | Browser UI for products, data, backtest, run history                                 |
+| [Project Layout](docs/architecture.md)    | Directory map, tests                                                                 |

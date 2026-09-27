@@ -31,7 +31,7 @@ from indicators.base import (
 
 BUNDLED = (
     'ma', 'ema', 'macd', 'rsi', 'bollinger', 'atr',
-    'kdj', 'cci', 'dmi', 'donchian', 'keltner', 'obv',
+    'kdj', 'cci', 'dmi', 'donchian', 'keltner', 'obv', 'oi',
 )
 
 
@@ -260,6 +260,18 @@ def test_channel_bands_bracket_the_middle(key):
     assert (out['mid'][valid] <= out['upper'][valid]).all()
 
 
+def test_oi_is_the_loaded_open_interest_and_its_average():
+    """The series is the bar's own open interest, not a transform of price,
+    and the average is an SMA of that series."""
+    import talib
+
+    df = build_frame()
+    df['oi'] = np.arange(len(df), dtype='float64') * 10 + 1000
+    out = _compute('oi', df, period=5)
+    np.testing.assert_array_equal(out['oi'], df['oi'].to_numpy())
+    np.testing.assert_allclose(out['ma'], talib.SMA(df['oi'].to_numpy(dtype='float64'), 5))
+
+
 def test_donchian_bands_are_the_window_extremes():
     df = build_frame()
     out = _compute('donchian', df, period=20)
@@ -347,6 +359,22 @@ def test_sign_coloured_pair_is_only_meaningful_on_a_bar():
         outputs = (Output('x', kind='line', color=('up', 'down')),)
 
     assert any("kind='bar'" in e for e in describe_errors(Wrong))
+
+
+def test_candle_colour_is_only_meaningful_on_a_bar():
+    class Wrong(Indicator):
+        outputs = (Output('x', kind='line', color='candle'),)
+
+    assert any("color 'candle'" in e for e in describe_errors(Wrong))
+
+
+def test_oi_bars_follow_the_day_direction():
+    """Height is the open interest; colour is the day's price, the same rule
+    as the volume pane. A single palette colour would paint every bar one
+    hue, because the level is always positive."""
+    oi = next(o for o in declared_outputs(load_registered_indicator('oi')) if o.key == 'oi')
+    assert oi.kind == 'bar'
+    assert oi.color == 'candle'
 
 
 def test_output_json_passes_colour_through_verbatim():

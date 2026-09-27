@@ -24,12 +24,13 @@ from .keltner import Keltner
 from .ma import Ma
 from .macd import Macd
 from .obv import Obv
+from .oi import Oi
 from .rsi import Rsi
 
 __all__ = [
     'Indicator', 'IndicatorContext', 'Output',
     'Ma', 'Ema', 'Macd', 'Rsi', 'Bollinger', 'Atr',
-    'Kdj', 'Cci', 'Dmi', 'Donchian', 'Keltner', 'Obv',
+    'Kdj', 'Cci', 'Dmi', 'Donchian', 'Keltner', 'Obv', 'Oi',
     'discover_indicators', 'load_indicator', 'load_registered_indicator', 'name_for',
 ]
 

@@ -22,12 +22,18 @@ router = APIRouter(prefix='/api/strategies', tags=['strategies'])
 def _describe(key: str, cls: type) -> dict:
     """One catalog entry. Never raises for a badly declared class.
 
-    Every field below is one a user typed, and ``resolve_space`` raises
-    ``TypeError`` -- not ``ValueError`` -- for ``space = {'period': (2, 100)}``
-    or ``fixed_params = 5``. Letting that through 500'd the whole list and
-    emptied the backtest form's dropdown over one private file. Failures land
-    in ``space_error`` / ``errors`` instead, the same bargain
-    ``web.routers.indicators._describe`` makes.
+    Every field below is one a user typed, and ``space = 5`` or
+    ``space = {'period': (2, 100)}`` raises ``TypeError`` on the way out.
+    Letting that through 500'd the whole list and emptied the backtest form's
+    dropdown over one private file. Failures land in ``space_error`` /
+    ``errors`` instead, the same bargain ``web.routers.indicators._describe``
+    makes.
+
+    ``space`` lists exactly the tunable params: the ones the backtest form
+    offers to edit. A ``space`` that cannot be read is in ``errors`` too, so
+    the form lists the strategy disabled with the reason: the panel shows
+    ``errors`` and nothing else, and a form missing the fields the author
+    declared would give no hint why.
     """
     try:
         space = {k: spec_to_json(v) for k, v in resolve_space(cls).items()}
@@ -35,9 +41,9 @@ def _describe(key: str, cls: type) -> dict:
     except ValueError as e:
         space, space_error = {}, str(e)
     except Exception as e:  # noqa: BLE001 -- a malformed declaration, not our bug
-        space, space_error = {}, f'{type(e).__name__}: {e}'
+        space, space_error = {}, f'{cls.__name__}.space: {type(e).__name__}: {e}'
 
-    errors: list = []
+    errors: list = [space_error] if space_error else []
 
     def _safe(label: str, fn, fallback):
         try:
@@ -53,7 +59,6 @@ def _describe(key: str, cls: type) -> dict:
         'file': _safe('file', lambda: inspect.getfile(cls), ''),
         'docstring': inspect.getdoc(cls) or '',
         'params': _safe('params', lambda: dict(getattr(cls, 'params', {}) or {}), {}),
-        'fixed_params': _safe('fixed_params', lambda: [str(p) for p in getattr(cls, 'fixed_params', ()) or ()], []),
         'space': space,
         'space_error': space_error,
         'errors': errors,
@@ -77,7 +82,6 @@ def _broken_entry(module_name: str, message: str, taken: set) -> dict:
         'file': '',
         'docstring': '',
         'params': {},
-        'fixed_params': [],
         'space': {},
         'space_error': None,
         'errors': [message],

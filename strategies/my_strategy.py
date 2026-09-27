@@ -19,9 +19,10 @@ class MyStrategy(Strategy):
       3. Or add a new file under strategies/ -- it is picked up automatically
          by ``strategies.discover_strategies()`` (used by ``main.py`` and the
          web panel), no registration needed.
-      4. Optionally declare a ``space`` alongside ``params`` to say what range
-         each one is plausible over, e.g. ``space = {'period': Int(5, 60)}``.
-         If omitted, a range is inferred from each param's default.
+      4. Declare a ``space`` alongside ``params`` for the ones worth tuning,
+         with the range each is plausible over, e.g.
+         ``space = {'period': Int(5, 60)}``. The web panel edits only those;
+         the rest run at their defaults.
 
     Available on ``BarContext``:
       ctx.bar(sym)                  Bar(open, high, low, close, settle, volume, oi)

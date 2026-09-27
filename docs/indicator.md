@@ -43,13 +43,12 @@ Start from `indicators/my_indicator.py` if you want a template.
 | `guides` | Horizontal reference lines on a sub-pane, e.g. `(30, 70)` for RSI or `(0,)` for MACD |
 | `outputs` | Tuple of `Output`, one per drawn series — see below |
 | `params` | Dict of defaults; instance values live on `self.p`, overridden via `MyIndicator(**kw)` |
-| `space` | Plausible range per param, `{name: Int / Float / Categorical}` — same type as a strategy's |
-| `fixed_params` | Params excluded from `space`. Empty by default, unlike `Strategy`'s `('lots',)` |
+| `space` | The tunable params and the range each is plausible over, `{name: Int / Float / Categorical}` |
 | `constraints` | Tuple of `callable(params) -> bool`, e.g. `lambda p: p['fast'] < p['slow']` |
 
-Declare `space`. Besides documenting the parameter, it is what bounds a period arriving from the URL, so an absurd window never reaches TA-Lib. It is also the range the panel's params editor shows under each field and checks before sending anything (see [Web Panel](web.md#editing-indicator-params)). A param with no declared range falls back to a heuristic `value/4 .. value*4`.
+Declare `space`. Besides documenting the parameter, it is what bounds a period arriving from the URL, so an absurd window never reaches TA-Lib. It is also the range the panel's params editor shows under each field and checks before sending anything (see [Web Panel](web.md#editing-indicator-params)). A param with no declared range cannot be overridden from the picker or a URL at all.
 
-The editor offers every param in `params` that is not in `fixed_params` and has a number, bool, or string default, or a `Categorical` space. It shows params by their Python names, the same names `p=name=value` takes.
+The editor offers every param in `space` that has a number, bool, or string default, or a `Categorical` space. It shows params by their Python names, the same names `p=name=value` takes.
 
 ## Outputs
 
@@ -74,6 +73,7 @@ Colour is **declared** here and **resolved in the browser**, because the panel f
 | `'muted'` / `'axis'` | Recessive greys, for a band or a reference series |
 | `'#rrggbb'` | A literal. You are responsible for checking it in both themes |
 | `('up', 'down')` | The `>= 0` / `< 0` pair of a sign-coloured bar. Only meaningful with `kind='bar'` — it is what makes a MACD histogram readable |
+| `'candle'` | Each bar uses that day's candle colour: red when close ≥ open, green otherwise — the same rule as the volume pane. Only with `kind='bar'`. The height stays the series value |
 
 ## Computing
 

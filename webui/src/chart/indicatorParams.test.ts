@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { INDICATORS } from '../test/utils'
-import { activeOverrides, editableParams, paramSummary, parseParam } from './indicatorParams'
+import {
+  activeOverrides,
+  editableParams,
+  effectiveParams,
+  paramSummary,
+  parseParam,
+  seedParamDraft,
+} from './indicatorParams'
 
 describe('parseParam', () => {
   const int = { kind: 'int' as const, low: 2, high: 100 }
@@ -29,10 +36,26 @@ describe('parseParam', () => {
 })
 
 describe('the helpers the picker reads', () => {
-  const ma = { ...INDICATORS[0], params: { fast: 5, slow: 20, source: null, lots: 1 }, fixed_params: ['lots'] }
+  // `lots` is left out of `space`; `source` is in it, but a `None` default
+  // has no input that could hold it.
+  const ma = {
+    ...INDICATORS[0],
+    params: { fast: 5, slow: 20, source: null, lots: 1 },
+    space: { ...INDICATORS[0].space, source: { kind: 'int' as const, low: 1, high: 3 } },
+  }
 
-  it('offers only params an input can hold, minus fixed ones', () => {
+  it('offers only params in `space` that an input can hold', () => {
     expect(editableParams(ma)).toEqual(['fast', 'slow'])
+    expect(editableParams({ ...ma, space: {} })).toEqual([])
+  })
+
+  it('leaves params outside `space` out of the draft and the values a run sends', () => {
+    expect(seedParamDraft(ma, { fast: 8, lots: 3 })).toEqual({ fast: '8', slow: '20' })
+    expect(effectiveParams(ma, { fast: '8', slow: '20', lots: '3' })).toEqual({
+      ok: true,
+      params: { fast: 8, slow: 20 },
+      errors: {},
+    })
   })
 
   it('keeps only overrides the class still declares', () => {

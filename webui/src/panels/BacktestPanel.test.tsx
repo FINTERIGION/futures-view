@@ -52,8 +52,8 @@ describe('prefill from a past run', () => {
   })
 
   it('carries the cost assumptions the run was made under', async () => {
-    // Without these the rerun reproduces nothing: the panel's own defaults are
-    // 200000 / 0, and a run made at 100000 / 1.5 is a different backtest.
+    // The panel's own default cash is 100000. A remembered 200000 must not
+    // survive opening a run that was made at 100000 / 1.5.
     localStorage.setItem('ft.cash', JSON.stringify(200000))
     localStorage.setItem('ft.slippage', JSON.stringify(0))
 
@@ -66,26 +66,108 @@ describe('prefill from a past run', () => {
 })
 
 describe('strategy parameters', () => {
-  it('offers no parameter inputs and sends none, whatever strategy is picked', async () => {
-    // The form edits the run's own settings only; the engine uses each
-    // strategy's declared defaults (STRATEGIES declares `fast`/`slow` for
-    // double_ma and `atr_mult` for chan_theory -- none of them show here).
+  it('offers only the params in `space`, and does not send the rest', async () => {
+    // `lots` is declared but left out of `space`: it runs at its default,
+    // even when an older run had remembered a value for it.
+    const user = userEvent.setup()
+    vi.mocked(strategiesApi.list).mockResolvedValue([
+      { ...STRATEGIES[0], params: { fast: 10, slow: 30, lots: 1 } },
+      STRATEGIES[1],
+    ])
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    localStorage.setItem('ft.strategyParams', JSON.stringify({ double_ma: { fast: 12, lots: 4 } }))
+    renderPanel()
+
+    await waitFor(() => expect(fieldInput('fast')).toHaveValue(12))
+    expect(screen.queryByText('lots')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /run backtest/i }))
+    await waitFor(() => expect(backtestApi.start).toHaveBeenCalled())
+    expect(vi.mocked(backtestApi.start).mock.calls[0][0].params).toEqual({ fast: 12, slow: 30 })
+  })
+
+  it('edits the declared params and sends the effective values', async () => {
     const user = userEvent.setup()
     localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
     renderPanel()
 
     await waitFor(() => expect(screen.getByRole('combobox')).toHaveValue('double_ma'))
-    expect(screen.queryByText('fast')).not.toBeInTheDocument()
-    expect(screen.queryByText('slow')).not.toBeInTheDocument()
+    expect(fieldInput('fast')).toHaveValue(10)
+    expect(fieldInput('slow')).toHaveValue(30)
+    expect(fieldInput('Cash')).toHaveValue(100000)
 
-    await user.selectOptions(screen.getByRole('combobox'), 'chan_theory')
-    expect(screen.queryByText('atr_mult')).not.toBeInTheDocument()
-    // Cash and slippage are the only numeric inputs left.
-    expect(screen.getAllByRole('spinbutton')).toHaveLength(2)
-
+    fireEvent.change(fieldInput('fast'), { target: { value: '12' } })
     await user.click(screen.getByRole('button', { name: /run backtest/i }))
     await waitFor(() => expect(backtestApi.start).toHaveBeenCalled())
-    expect(vi.mocked(backtestApi.start).mock.calls[0][0]).not.toHaveProperty('params')
+    expect(vi.mocked(backtestApi.start).mock.calls[0][0]).toMatchObject({
+      params: { fast: 12, slow: 30 },
+    })
+  })
+
+  it('keeps each strategy’s parameters separate, and drops a name the class no longer declares', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('ft.strategyParams', JSON.stringify({ chan_theory: { atr_mult: 3 } }))
+    renderPanel({ strategy: 'double_ma', params: { fast: 7, slow: 40, retired: 9 } })
+
+    await waitFor(() => expect(fieldInput('fast')).toHaveValue(7))
+    expect(fieldInput('slow')).toHaveValue(40)
+    expect(screen.queryByText('retired')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByRole('combobox'), 'chan_theory')
+    expect(fieldInput('atr_mult')).toHaveValue(3)
+  })
+
+  it('restores the class defaults and keeps them after switching strategy', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    renderPanel()
+
+    await waitFor(() => expect(fieldInput('fast')).toHaveValue(10))
+    const reset = screen.getByRole('button', { name: 'Defaults' })
+    expect(reset).toBeDisabled()
+
+    fireEvent.change(fieldInput('fast'), { target: { value: '12' } })
+    expect(reset).toBeEnabled()
+    await user.click(reset)
+
+    expect(fieldInput('fast')).toHaveValue(10)
+    expect(fieldInput('slow')).toHaveValue(30)
+    expect(reset).toBeDisabled()
+    expect(JSON.parse(localStorage.getItem('ft.strategyParams')!)).toMatchObject({
+      double_ma: { fast: 10, slow: 30 },
+    })
+
+    await user.selectOptions(screen.getByRole('combobox'), 'chan_theory')
+    await user.selectOptions(screen.getByRole('combobox'), 'double_ma')
+    expect(fieldInput('fast')).toHaveValue(10)
+  })
+
+  it('puts an out-of-range parameter back inside its range', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    renderPanel()
+    const runButton = await screen.findByRole('button', { name: /run backtest/i })
+    await waitFor(() => expect(runButton).toBeEnabled())
+
+    fireEvent.change(fieldInput('fast'), { target: { value: '101' } })
+    await waitFor(() => expect(runButton).toBeDisabled())
+
+    await user.click(screen.getByRole('button', { name: 'Defaults' }))
+    expect(fieldInput('fast')).toHaveValue(10)
+    expect(screen.queryByText(/must be between 2 and 100/i)).not.toBeInTheDocument()
+    expect(runButton).toBeEnabled()
+  })
+
+  it('blocks the run when a parameter is outside its declared range', async () => {
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    renderPanel()
+    const runButton = await screen.findByRole('button', { name: /run backtest/i })
+    await waitFor(() => expect(runButton).toBeEnabled())
+
+    fireEvent.change(fieldInput('fast'), { target: { value: '101' } })
+    await waitFor(() => expect(runButton).toBeDisabled())
+    expect(screen.getByText(/must be between 2 and 100/i)).toBeInTheDocument()
+    expect(backtestApi.start).not.toHaveBeenCalled()
   })
 })
 
@@ -104,6 +186,36 @@ describe('slippage validation', () => {
 
     await waitFor(() => expect(runButton).toBeDisabled())
     expect(screen.getByText(/cannot be negative/i)).toBeInTheDocument()
+    expect(backtestApi.start).not.toHaveBeenCalled()
+  })
+})
+
+describe('cash and window validation', () => {
+  it('blocks the run when cash is not greater than zero', async () => {
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    renderPanel()
+    const runButton = await screen.findByRole('button', { name: /run backtest/i })
+    await waitFor(() => expect(runButton).toBeEnabled())
+
+    fireEvent.change(fieldInput('Cash'), { target: { value: '0' } })
+    await waitFor(() => expect(runButton).toBeDisabled())
+    expect(screen.getByText(/greater than zero/i)).toBeInTheDocument()
+    expect(backtestApi.start).not.toHaveBeenCalled()
+  })
+
+  it('blocks the run when the start date is after the end date', async () => {
+    localStorage.setItem('ft.strategy', JSON.stringify('double_ma'))
+    renderPanel()
+    const runButton = await screen.findByRole('button', { name: /run backtest/i })
+    await waitFor(() => expect(runButton).toBeEnabled())
+
+    const dateInput = (label: string) =>
+      screen.getByText(label).closest('.field')!.querySelector('input') as HTMLInputElement
+    fireEvent.change(dateInput('Start'), { target: { value: '2024-06-01' } })
+    fireEvent.change(dateInput('End'), { target: { value: '2024-01-01' } })
+
+    await waitFor(() => expect(runButton).toBeDisabled())
+    expect(screen.getByText(/start date on or before the end date/i)).toBeInTheDocument()
     expect(backtestApi.start).not.toHaveBeenCalled()
   })
 })

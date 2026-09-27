@@ -78,6 +78,15 @@ interface TooltipParam {
   axisValueLabel?: string
 }
 
+/** One day's bar colour, shared by the volume pane and any indicator bar that
+ * declares `color: 'candle'`. Red when the close rose or held (close >= open),
+ * green when it fell — the Chinese-market candle convention — at the same
+ * half opacity the volume bars use. */
+const dayBarStyle = (b: Bar) => ({
+  color: b.close >= b.open ? CANDLE.up : CANDLE.down,
+  opacity: 0.5,
+})
+
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
 /** Series names reach the tooltip as raw HTML, and they come from whatever an
  * indicator class declared -- so they are escaped, exactly as ECharts' own
@@ -122,7 +131,7 @@ export function superChartOption(input: SuperChartInput): EChartsOption {
   const ohlc = bars.map((b) => [b.open, b.close, b.low, b.high])
   const volumes = bars.map((b) => ({
     value: b.volume,
-    itemStyle: { color: b.close >= b.open ? CANDLE.up : CANDLE.down, opacity: 0.5 },
+    itemStyle: dayBarStyle(b),
   }))
 
   const rollBoundaries: string[] = []
@@ -241,6 +250,16 @@ export function superChartOption(input: SuperChartInput): EChartsOption {
       }
 
       if (out.kind === 'bar') {
+        // 'candle' follows the price bar, not the series value: open interest
+        // is always positive, so sign-colouring would paint every bar one hue.
+        if (out.color === 'candle') {
+          return {
+            ...shared,
+            type: 'bar',
+            barMaxWidth: 6,
+            data: data.map((v, i) => ({ value: v, itemStyle: dayBarStyle(bars[i]) })),
+          }
+        }
         const [up, down] = resolveBarColors(out.color, dark, fallbackIndex)
         return {
           ...shared,

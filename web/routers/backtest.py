@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from core.backtest import run_single_backtest
+from core.params import validated_overrides
 from datafeed.products import require_products
 from strategies import load_registered_strategy
 
@@ -63,13 +64,16 @@ def start_backtest(body: BacktestRequest):
     try:
         symbols = require_products(body.symbols)
         strategy_cls = load_registered_strategy(body.strategy)
+        # Before a run row exists: an unknown name, a value outside `space`,
+        # or a failed constraint must not leave a `running` row behind.
+        params = validated_overrides(strategy_cls, body.params)
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     run_id = store.create_run(
         kind='backtest', strategy=strategy_cls.__name__, symbols=symbols,
         start=body.start, end=body.end, cash=body.cash, slippage=body.slippage,
-        params=body.params,
+        params=params,
     )
 
     def run(job):
@@ -78,7 +82,7 @@ def start_backtest(body: BacktestRequest):
         job.progress = 0.3
         job.message = f'Running {strategy_cls.__name__}'
         outcome = run_single_backtest(
-            market, strategy_cls, body.params, body.cash, body.slippage,
+            market, strategy_cls, params, body.cash, body.slippage,
         )
         job.progress = 0.9
         result, metrics = outcome['result'], outcome['metrics']

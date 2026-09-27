@@ -11,7 +11,7 @@ import { chartTokens } from './theme'
  * Python would be the light-theme colour still sitting on a dark surface.
  * What crosses the wire is therefore the declaration itself.
  *
- * Four accepted forms, in the order an author should reach for them:
+ * Accepted forms, in the order an author should reach for them:
  *
  * - `number` — a slot in the categorical palette. `CATEGORICAL_LIGHT` and
  *   `CATEGORICAL_DARK` are index-aligned by hue, so one number is correct in
@@ -22,6 +22,9 @@ import { chartTokens } from './theme'
  * - `'#rrggbb'` — a literal, for an author who has checked both themes.
  * - `[a, b]` — the `>= 0` / `< 0` pair of a sign-coloured bar; `resolveColor`
  *   takes the first, and `resolveBarColors` returns both.
+ * - `'candle'` is not resolved here. A bar that declares it is coloured per
+ *   point from that day's price (see `dayBarStyle` in superChartOption),
+ *   because the colour depends on the candle, not on one hex.
  *
  * `fallbackIndex` is assigned by the caller across every rendered output in
  * order, so two indicators that both declared nothing do not collide on the

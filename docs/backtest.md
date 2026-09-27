@@ -12,9 +12,9 @@ python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --st
 | --- | --- | --- |
 | `--symbols` | Products to load (weighted + contract data) | `SA FG CF C` |
 | `--start` / `--end` | Backtest window, `YYYY-MM-DD` | `2020-01-01` / `2026-12-31` |
-| `--cash` | Initial equity (CNY) | `200000` |
+| `--cash` | Initial equity (CNY); must be greater than 0 | `100000` |
 | `--strategy` | A discovered short name (`--help` lists them), or a `module.path:ClassName` reference to a strategy outside this repo | `double_ma` |
-| `--slippage` | Fill slippage in ticks, applied against the order | `0` |
+| `--slippage` | Fill slippage in ticks, applied against the order; must be greater than or equal to 0 | `0` |
 | `--lots` | Lots per trade, for strategies that expose it | `1` |
 | `--param NAME=VALUE` | Override one param; repeatable | — |
 | `--update-data` | Refresh exchange data before running | off |

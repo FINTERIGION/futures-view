@@ -53,9 +53,12 @@ CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind);
 """
 
-# Serialises writes. Deliberately NOT reentrant, and deliberately not the
-# lock used to build the connection: `create_run`/`finish_run` call
-# `_get_conn` while already holding this one.
+# Serialises every use of the shared connection, reads included. Python's
+# sqlite3 statement cache is not safe when two threads call execute() on one
+# connection; that race surfaces as InterfaceError ("bad parameter or other
+# API misuse"). Deliberately NOT reentrant, and deliberately not the lock
+# used to build the connection: `create_run`/`finish_run` call `_get_conn`
+# while already holding this one.
 _lock = threading.Lock()
 _conn_lock = threading.Lock()
 
@@ -231,11 +234,12 @@ def finish_run(
 
 
 def get_run(run_id: str) -> Optional[dict]:
-    conn = _get_conn()
-    row = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
-    if row is None:
-        return None
-    return _row_to_dict(row)
+    with _lock:
+        conn = _get_conn()
+        row = conn.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
+        if row is None:
+            return None
+        return _row_to_dict(row)
 
 
 def get_artifact(run_id: str) -> Optional[dict]:
@@ -250,14 +254,15 @@ def get_artifact(run_id: str) -> Optional[dict]:
 
 
 def list_runs(*, kind: str = None, limit: int = 100) -> List[dict]:
-    conn = _get_conn()
-    if kind:
-        rows = conn.execute(
-            'SELECT * FROM runs WHERE kind=? ORDER BY created_at DESC LIMIT ?', (kind, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute('SELECT * FROM runs ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    with _lock:
+        conn = _get_conn()
+        if kind:
+            rows = conn.execute(
+                'SELECT * FROM runs WHERE kind=? ORDER BY created_at DESC LIMIT ?', (kind, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute('SELECT * FROM runs ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
 
 class RunInFlight(Exception):

@@ -20,6 +20,8 @@ export const en = {
     clear: 'Clear',
     close: 'Close',
     slippageNegative: 'Slippage is a cost and cannot be negative — a negative one fills every trade better than the market and inflates the whole run.',
+    cashNotPositive: 'Cash must be greater than zero — an account that starts with nothing has nothing to test.',
+    windowInverted: 'Set a start date on or before the end date.',
   },
   products: {
     code: 'Code',
@@ -91,6 +93,8 @@ export const en = {
       final_equity: 'Final Equity',
       turnover: 'Turnover',
       expectancy: 'Expectancy',
+      n_forced_liquidations: 'Forced liquidations',
+      n_rejected_orders: 'Rejected orders',
     },
   },
   runs: {

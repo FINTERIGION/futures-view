@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Bar, IndicatorInfo, IndicatorValues, RollPoint } from '../api/types'
+import { CANDLE } from '../theme/palette'
 import { MAX_SUB_PANES, superChartOption, type IndicatorLayer } from './superChartOption'
 
 function bar(date: string, o: number, h: number, l: number, c: number, v = 100): Bar {
@@ -133,7 +134,6 @@ function indicator(over: Partial<IndicatorInfo> = {}): IndicatorInfo {
     guides: [30, 70],
     outputs: [{ key: 'rsi', label: 'RSI', kind: 'line', color: 4, style: 'solid' }],
     params: { period: 14 },
-    fixed_params: [],
     space: {},
     space_error: null,
     errors: [],
@@ -321,6 +321,51 @@ describe('superChartOption indicators', () => {
     expect(colors[0]).toBe(colors[2]) // both negative
     expect(colors[1]).toBe(colors[3]) // both positive
     expect(colors[0]).not.toBe(colors[1])
+  })
+
+  it('colours a candle-declared bar the same way as volume', () => {
+    // Red when the day rose or held, green when it fell. Open interest is
+    // always positive, so colouring by the value's sign would paint one hue.
+    const days = [
+      bar('2024-01-02', 10, 11, 9, 10.5), // rose
+      bar('2024-01-03', 11, 11.2, 9, 10), // fell
+      bar('2024-01-04', 10, 10.4, 9.6, 10), // held: close == open counts as up
+    ]
+    const oi = indicator({
+      key: 'oi',
+      label: 'OI',
+      precision: 0,
+      value_range: null,
+      guides: [],
+      outputs: [{ key: 'oi', label: 'OI', kind: 'bar', color: 'candle', style: 'solid' }],
+    })
+    const option = superChartOption({
+      dark: false,
+      bars: days,
+      panes: ['volume', 'ind:oi'],
+      indicators: [
+        layer(
+          oi,
+          values({
+            indicator: 'oi',
+            dates: days.map((b) => b.date),
+            outputs: { oi: { values: [1000, 1100, 1050], valid_from: 0 } },
+          }),
+        ),
+      ],
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = option.series as any[]
+    const volume = series.find((s) => s.name === 'volume')
+    const oiSeries = series.find((s) => s.name === 'OI OI')
+    const style = (s: { data: Array<{ itemStyle: { color: string; opacity: number } }> }, i: number) =>
+      s.data[i].itemStyle
+    expect(style(oiSeries, 0)).toEqual(style(volume, 0))
+    expect(style(oiSeries, 1)).toEqual(style(volume, 1))
+    expect(style(oiSeries, 2)).toEqual(style(volume, 2))
+    expect(style(oiSeries, 0).color).toBe(CANDLE.up)
+    expect(style(oiSeries, 1).color).toBe(CANDLE.down)
+    expect(style(oiSeries, 2).color).toBe(CANDLE.up)
   })
 
   it('titles each indicator pane instead of turning on a legend', () => {

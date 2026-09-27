@@ -7,6 +7,7 @@ import type { RunDetail } from '../api/types'
 import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
 import { useToast } from '../components/Toast'
+import { effectiveParams, seedParamDraft, type ParamFieldErrors } from '../chart/indicatorParams'
 import { useJobSlot } from '../shell/JobsProvider'
 import { useHotkeys } from '../shell/useHotkeys'
 import { useStickyState } from '../hooks/useStickyState'
@@ -14,6 +15,29 @@ import { useWorkspace } from '../shell/WorkspaceContext'
 import { BacktestForm } from './BacktestForm'
 import { ResultTables } from './ResultTables'
 import { sharedFormDefaults } from './sharedFormDefaults'
+
+type StrategyParamMap = Record<string, Record<string, unknown>>
+
+function asParamMap(value: unknown): StrategyParamMap {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return value as StrategyParamMap
+}
+
+/** Prefill replaces one strategy's bag and keeps every other strategy's.
+ * Reading storage here, rather than letting `useStickyState`'s override
+ * replace the whole map, is what stops opening a double-ma run from
+ * forgetting the parameters remembered for another strategy. */
+function mergedStrategyParams(prefill?: BacktestFieldsPrefill): StrategyParamMap | undefined {
+  if (!prefill?.strategy || prefill.params === undefined) return undefined
+  let stored: StrategyParamMap = {}
+  try {
+    const raw = localStorage.getItem('ft.strategyParams')
+    if (raw) stored = asParamMap(JSON.parse(raw))
+  } catch {
+    stored = {}
+  }
+  return { ...stored, [prefill.strategy]: prefill.params }
+}
 
 /** What this panel itself reads out of a prefill -- deliberately narrower
  * than `WorkspaceContext.BacktestPrefill`, which also carries `symbols`: the
@@ -28,6 +52,10 @@ export interface BacktestFieldsPrefill {
   end?: string
   cash?: number
   slippage?: number
+  /** Effective parameter values from the run being reopened. `{}` means that
+   * run used the class defaults, and replaces whatever this strategy had
+   * remembered. Omitted leaves the remembered values alone. */
+  params?: Record<string, unknown>
 }
 
 /**
@@ -39,10 +67,10 @@ export interface BacktestFieldsPrefill {
  * The universe is no longer picked here: it comes from
  * `WorkspaceContext.universe`, the same list the sidebar's checkboxes edit.
  *
- * Strategy parameters are not part of this form. A run sends none, so the
- * engine uses each strategy's declared defaults -- including a run reopened
- * from the History tab, which reproduces that run's window and costs but not
- * whatever parameters it was launched with.
+ * Each strategy's parameters live in `ft.strategyParams`, one bag per key.
+ * A run sends the effective values (defaults overlaid with what the form
+ * shows). Opening a past run replaces that strategy's bag with the values
+ * the run stored, which is why this panel is remounted on a prefill.
  */
 export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) {
   const { t } = useTranslation()
@@ -83,12 +111,22 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
   const [end, setEnd] = useStickyState('end', sharedFormDefaults.end, initialPrefill?.end)
   const [cash, setCash] = useStickyState('cash', sharedFormDefaults.cash, initialPrefill?.cash)
   const [slippage, setSlippage] = useStickyState('slippage', sharedFormDefaults.slippage, initialPrefill?.slippage)
+  const [prefilledParams] = useState(() => mergedStrategyParams(initialPrefill))
+  const [strategyParams, setStrategyParams] = useStickyState<StrategyParamMap>('strategyParams', {}, prefilledParams)
+  const paramMap = asParamMap(strategyParams)
+
+  const [paramDraft, setParamDraft] = useState<Record<string, string>>({})
+  const [seededKey, setSeededKey] = useState<string | null>(null)
 
   // Slippage is a cost and cannot be negative -- a negative one fills every
-  // trade better than the market and inflates the whole run. The API rejects
-  // it too (web/schemas.py); blocking it here is so the user is told before
-  // they wait for a job.
+  // trade better than the market and inflates the whole run. Cash has to be
+  // a finite amount the account can actually start with. The window has to
+  // name both ends, in order. The API rejects each of these too
+  // (web/schemas.py); blocking them here is so the user is told before they
+  // wait for a job.
   const slippageValid = slippage >= 0
+  const cashValid = Number.isFinite(cash) && cash > 0
+  const windowValid = start !== '' && end !== '' && start <= end
 
   // Also covers a pick that is no longer in the catalog -- a class renamed or
   // deleted and then reloaded. Left alone, the select would show the first
@@ -104,6 +142,43 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
   // The remembered pick can be a strategy whose file has since broken; the
   // form lists it disabled with its error, and there is nothing to run.
   const strategyBroken = Boolean(strategies?.find((s) => s.key === strategyKey)?.errors.length)
+  const strategy = strategies?.find((s) => s.key === strategyKey)
+
+  // The draft is per strategy. Switching (or the catalog arriving) reseeds
+  // from that strategy's bag before paint, so a frame of empty fields cannot
+  // flash a "required" error or enable a run against values the user cannot
+  // see. A prefill remounts this panel, so the bag it wrote is what the
+  // first seed reads. Later edits must not reseed: that would put back the
+  // value just typed and wipe a field that does not parse yet.
+  let draft = paramDraft
+  if (strategy && seededKey !== strategy.key) {
+    draft = seedParamDraft(strategy, paramMap[strategy.key])
+    setSeededKey(strategy.key)
+    setParamDraft(draft)
+  }
+
+  const parsedParams = strategy
+    ? effectiveParams(strategy, draft)
+    : { ok: true as const, params: {} as Record<string, unknown>, errors: {} as ParamFieldErrors }
+
+  const onParamDraftChange = (name: string, raw: string) => {
+    if (!strategy) return
+    const next = { ...draft, [name]: raw }
+    setParamDraft(next)
+    const parsed = effectiveParams(strategy, next)
+    if (parsed.ok) setStrategyParams({ ...paramMap, [strategy.key]: parsed.params })
+  }
+
+  // Same write as an edit: the class defaults go into this strategy's bag,
+  // so switching away and back reseeds from them instead of the values just
+  // cleared. The class's own `params` are not touched.
+  const onResetParams = () => {
+    if (!strategy) return
+    const next = seedParamDraft(strategy, {})
+    setParamDraft(next)
+    const parsed = effectiveParams(strategy, next)
+    if (parsed.ok) setStrategyParams({ ...paramMap, [strategy.key]: parsed.params })
+  }
 
   // The run whose outcome has already been announced. A toast is not
   // idempotent the way `invalidateQueries` is, and this effect re-runs on
@@ -126,9 +201,18 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     }
   }, [job.state, queryClient, toast, t])
 
-  const canRun = !job.isActive && Boolean(strategyKey) && !strategyBroken && universe.length > 0 && slippageValid
+  const canRun =
+    !job.isActive &&
+    Boolean(strategyKey) &&
+    !strategyBroken &&
+    universe.length > 0 &&
+    slippageValid &&
+    cashValid &&
+    windowValid &&
+    parsedParams.ok
 
   const runBacktest = async () => {
+    if (!parsedParams.ok) return
     setError(null)
     try {
       const { job_id, run_id } = await backtestApi.start({
@@ -138,6 +222,7 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
         end,
         cash,
         slippage,
+        params: parsedParams.params,
       })
       job.start(job_id)
       // A fresh run gets its own overlay even if the server hands back an id
@@ -201,6 +286,10 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
           onReloadStrategies={() => reloadStrategies.mutate()}
           reloadingStrategies={reloadStrategies.isPending}
           canReloadStrategies={!job.isActive}
+          paramDraft={draft}
+          onParamDraftChange={onParamDraftChange}
+          onResetParams={onResetParams}
+          paramErrors={parsedParams.errors}
           universe={universe}
           start={start}
           onStartChange={setStart}
@@ -211,10 +300,14 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
           slippage={slippage}
           onSlippageChange={setSlippage}
           slippageValid={slippageValid}
+          cashValid={cashValid}
+          windowValid={windowValid}
         />
 
         {error && <div className="hint-banner warning">{error}</div>}
         {!slippageValid && <div className="hint-banner warning">{t('common.slippageNegative')}</div>}
+        {!cashValid && <div className="hint-banner warning">{t('common.cashNotPositive')}</div>}
+        {!windowValid && <div className="hint-banner warning">{t('common.windowInverted')}</div>}
 
         <button
           className="btn btn-primary btn-block"

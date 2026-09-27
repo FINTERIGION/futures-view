@@ -87,9 +87,10 @@ export interface BacktestParams {
   end: string
   cash: number
   slippage: number
-  /** Strategy-parameter overrides. The web UI never sends any -- the backtest
-   * form edits the run's own settings only -- so the engine falls back to the
-   * strategy's declared defaults (web/schemas.py defaults this to `{}`). */
+  /** Strategy-parameter values, defaults included. The backtest form sends
+   * the set it is showing; history stores it and refills the form from it.
+   * Omitted, the engine uses the strategy's declared defaults
+   * (web/schemas.py defaults this to `{}`). */
   params?: Record<string, unknown>
 }
 

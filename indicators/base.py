@@ -46,7 +46,7 @@ class Output:
 
     ``color`` is declared here but resolved in the browser, because the panel
     is theme-aware and flips light/dark with no refetch -- a colour resolved
-    server-side would be stale the moment the user toggled the theme. Four
+    server-side would be stale the moment the user toggled the theme. These
     forms, in rough order of preference:
 
     * ``int`` -- a slot in the categorical palette. The light and dark arrays
@@ -61,6 +61,10 @@ class Output:
     * a 2-tuple of any of the above -- sign-coloured bars, ``(>= 0, < 0)``.
       Only meaningful with ``kind='bar'``; it is what makes a MACD histogram
       readable.
+    * ``'candle'`` -- each bar takes that day's candle colour: red when
+      close >= open, green otherwise, the same rule as the volume pane.
+      Only meaningful with ``kind='bar'``. The height stays the series
+      value; the colour comes from the price, not from the value's sign.
 
     ``None`` gets a palette slot assigned by the chart builder across every
     rendered output in order, so two indicators that both declared nothing
@@ -93,7 +97,7 @@ class Indicator:
     ``outputs``   Tuple of :class:`Output`, one per drawn series
     ============= =================================================================
 
-    ``params`` / ``space`` / ``fixed_params`` work exactly as they do on
+    ``params`` / ``space`` work exactly as they do on
     ``Strategy`` and go through the same ``core.params`` helpers -- one
     parameter model for both, so nothing that reads one has to learn the
     other. ``constraints`` is indicator-only: a tuple of
@@ -102,10 +106,8 @@ class Indicator:
 
     ``space`` earns its keep here for a second reason: the values endpoint
     takes param overrides from a URL, and the declared bounds are what stop
-    ``period=99999999999`` from reaching TA-Lib. Declare it.
-
-    Note ``fixed_params`` is empty, not ``('lots',)`` -- an indicator has no
-    position to size.
+    ``period=99999999999`` from reaching TA-Lib. A param left out of it
+    cannot be overridden from the picker or a URL at all.
     """
 
     label: str = ''
@@ -117,7 +119,6 @@ class Indicator:
 
     params: dict = {}
     space: dict = {}
-    fixed_params: tuple = ()
     constraints: tuple = ()
 
     def __init__(self, **overrides):
@@ -239,6 +240,11 @@ def describe_errors(cls: type) -> list:
             errors.append(
                 f"{name}.{out.key}: a 2-tuple colour is the >=0 / <0 pair for "
                 f"kind='bar', but this output is {out.kind!r}."
+            )
+        if out.color == 'candle' and out.kind != 'bar':
+            errors.append(
+                f"{name}.{out.key}: color 'candle' colours each bar by that day's "
+                f"price direction, but this output is {out.kind!r}."
             )
 
     value_range = getattr(cls, 'value_range', None)

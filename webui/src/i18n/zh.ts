@@ -22,6 +22,8 @@ export const zh: TranslationSchema = {
     clear: '清除',
     close: '关闭',
     slippageNegative: '滑点是成本，不能为负——负滑点会让每笔成交都优于市价，从而虚高整段回测结果。',
+    cashNotPositive: '资金必须大于 0——从零开始的账户没有可回测的本金。',
+    windowInverted: '请把开始日期设在结束日期当天或之前。',
   },
   products: {
     code: '代码',
@@ -93,6 +95,8 @@ export const zh: TranslationSchema = {
       final_equity: '最终权益',
       turnover: '换手率',
       expectancy: '期望收益',
+      n_forced_liquidations: '强平次数',
+      n_rejected_orders: '被拒订单',
     },
   },
   runs: {

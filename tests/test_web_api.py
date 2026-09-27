@@ -436,6 +436,20 @@ def test_a_backtest_that_could_only_fail_is_refused_before_it_is_queued(client, 
     assert len(store_module.list_runs(limit=1000)) == before
 
 
+def test_backtest_refuses_params_outside_space_before_a_run_exists(client):
+    """A period the class did not allow used to be queued and stored. The
+    same check the indicator URL uses now runs before ``create_run``."""
+    before = len(store_module.list_runs(limit=1000))
+    resp = client.post('/api/backtest', json={
+        'strategy': 'double_ma', 'symbols': ['SA'],
+        'start': '2024-01-01', 'end': '2024-06-01',
+        'params': {'fast_period': 999},
+    })
+    assert resp.status_code == 422, resp.text
+    assert 'outside its declared range' in resp.json()['detail']
+    assert len(store_module.list_runs(limit=1000)) == before
+
+
 def test_a_run_with_nothing_recorded_still_carries_the_engines_blown_up_flag(client, monkeypatch):
     """``compute_metrics`` returns ``{}`` for a run with no recorded bars,
     dropping the ``blown_up`` it was handed; the router carries the engine's
@@ -1650,6 +1664,67 @@ def _write_strategy(tmp_path, monkeypatch, name: str, body: str):
     monkeypatch.setattr(strategies, '__path__', [*strategies.__path__, str(tmp_path)])
 
 
+def test_strategy_catalog_space_is_only_what_the_class_declared(client, tmp_path, monkeypatch):
+    """The backtest form edits exactly ``space``; a param left out of it, or
+    a class with nothing tunable, is not an error."""
+    _write_strategy(tmp_path, monkeypatch, 'ftk_declared_strategy', (
+        'from core.params import Int\n'
+        'from strategies.base import Strategy\n'
+        'class FtkDeclaredStrategy(Strategy):\n'
+        '    params = {"period": 14, "window": 20, "lots": 1}\n'
+        '    space = {"window": Int(5, 60)}\n'
+        'class FtkPlainStrategy(Strategy):\n'
+        '    params = {"lots": 1}\n'
+    ))
+    entry = client.get('/api/strategies/ftk_declared').json()
+    assert list(entry['space']) == ['window']
+    assert entry['errors'] == []
+    plain = client.get('/api/strategies/ftk_plain').json()
+    assert plain['space'] == {} and plain['space_error'] is None and plain['errors'] == []
+    sys.modules.pop('strategies.ftk_declared_strategy', None)
+
+
+def test_a_space_key_that_is_not_a_param_is_reported_and_refused(client, tmp_path, monkeypatch):
+    """A typo in ``space`` pins the param the author meant to tune. It is
+    listed in ``errors`` -- the one field the form shows -- and no override
+    is accepted against a ``space`` that does not match ``params``."""
+    _write_strategy(tmp_path, monkeypatch, 'ftk_typo_space_strategy', (
+        'from core.params import Int\n'
+        'from strategies.base import Strategy\n'
+        'class FtkTypoSpaceStrategy(Strategy):\n'
+        '    params = {"window": 20}\n'
+        '    space = {"windwo": Int(5, 60)}\n'
+    ))
+    catalog = {e['key']: e for e in client.get('/api/strategies').json()}
+    assert catalog['double_ma']['errors'] == []
+    entry = catalog['ftk_typo_space']
+    assert entry['space'] == {}
+    assert any("'windwo', not in `params`" in e for e in entry['errors']), entry['errors']
+
+    resp = client.post('/api/backtest', json={
+        'strategy': 'ftk_typo_space', 'symbols': ['SA'],
+        'start': '2024-01-01', 'end': '2024-06-01',
+        'params': {'window': 30},
+    })
+    assert resp.status_code == 422, resp.text
+    assert 'windwo' in resp.json()['detail']
+    sys.modules.pop('strategies.ftk_typo_space_strategy', None)
+
+
+def test_backtest_refuses_a_param_left_out_of_space(client):
+    """``lots`` is declared on every strategy but tuned by none; over HTTP it
+    stays at its default instead of being bounded by a guess."""
+    before = len(store_module.list_runs(limit=1000))
+    resp = client.post('/api/backtest', json={
+        'strategy': 'double_ma', 'symbols': ['SA'],
+        'start': '2024-01-01', 'end': '2024-06-01',
+        'params': {'lots': 5},
+    })
+    assert resp.status_code == 422, resp.text
+    assert 'not in its `space`' in resp.json()['detail']
+    assert len(store_module.list_runs(limit=1000)) == before
+
+
 def test_an_unimportable_strategy_costs_one_entry_not_the_panel(client, tmp_path, monkeypatch):
     """One private file saved mid-edit used to 500 the list, the reload and
     every backtest -- whichever strategy was asked for -- with no message."""
@@ -1677,7 +1752,7 @@ def test_an_unimportable_strategy_costs_one_entry_not_the_panel(client, tmp_path
 
 @pytest.mark.parametrize('declaration', [
     '    space = {"period": (2, 100)}\n',   # a bare tuple where Int(2, 100) belongs
-    '    fixed_params = 5\n',               # not iterable
+    '    space = 5\n',                      # not iterable
 ])
 def test_a_malformed_strategy_space_costs_one_entry_not_the_catalog(client, tmp_path, monkeypatch, declaration):
     """``resolve_space`` raises ``TypeError`` for these, which the strategy
@@ -1693,6 +1768,7 @@ def test_a_malformed_strategy_space_costs_one_entry_not_the_catalog(client, tmp_
     catalog = {e['key']: e for e in resp.json()}
     assert catalog['double_ma']['errors'] == [], 'one bad class took a healthy one down'
     assert catalog['ftk_badspace']['space_error']
+    assert catalog['ftk_badspace']['space_error'] in catalog['ftk_badspace']['errors']
     sys.modules.pop('strategies.ftk_badspace_strategy', None)
 
 
@@ -1730,14 +1806,16 @@ def test_strategy_reload_checks_for_jobs_inside_hold_starts(client, monkeypatch)
 
 @pytest.mark.parametrize('declaration', [
     '    space = {"period": (2, 100)}\n',   # a bare tuple where Int(2, 100) belongs
-    '    fixed_params = 5\n',               # not iterable
+    '    space = 5\n',                      # not iterable
+    '    space = {"perod": Int(2, 100)}\n', # a typo: not a key of `params`
 ])
 def test_a_malformed_space_costs_one_entry_not_the_catalog(client, tmp_path, monkeypatch, declaration):
-    """``resolve_space`` raises ``TypeError`` rather than ``ValueError`` for
-    these, which ``_describe`` used to let through -- 500ing the catalog and
-    blanking the picker for every healthy indicator."""
+    """``resolve_space`` raises ``TypeError`` for the first two, which
+    ``_describe`` used to let through -- 500ing the catalog and blanking the
+    picker for every healthy indicator. Each lands in ``errors``, which is
+    what the picker shows."""
     _write_indicator(tmp_path, monkeypatch, 'ftk_badspace', (
-        'from indicators.base import Indicator, Output\n'
+        'from indicators.base import Indicator, Int, Output\n'
         'class FtkBadspace(Indicator):\n'
         '    params = {"period": 14}\n'
         + declaration +
@@ -1748,18 +1826,19 @@ def test_a_malformed_space_costs_one_entry_not_the_catalog(client, tmp_path, mon
     catalog = {e['key']: e for e in resp.json()}
     assert catalog['macd']['errors'] == [], 'one bad class took a healthy one down'
     assert catalog['ftk_badspace']['space_error']
+    assert catalog['ftk_badspace']['space_error'] in catalog['ftk_badspace']['errors']
     assert client.get('/api/indicators/ftk_badspace').status_code == 200
 
 
 @pytest.mark.parametrize('declaration', [
     '    space = {"period": (2, 100)}\n',   # reaches `_overrides` as a tuple, not a Spec
-    '    fixed_params = 5\n',               # makes `resolve_space` itself raise
+    '    space = 5\n',                      # makes `resolve_space` itself raise
 ])
 def test_an_override_against_a_malformed_space_is_refused(
     client, synthetic_bars, tmp_path, monkeypatch, declaration,
 ):
     """Not a 500, and not accepted either: the author tried to bound the
-    param, so the loose backstop is no substitute for the range they meant."""
+    param, and a range that cannot be read bounds nothing."""
     _write_indicator(tmp_path, monkeypatch, 'ftk_badspace_values', (
         'from indicators.base import Indicator, Output\n'
         'class FtkBadspaceValues(Indicator):\n'
@@ -1776,11 +1855,10 @@ def test_an_override_against_a_malformed_space_is_refused(
     assert 'space' in resp.json()['detail']
 
 
-def test_a_param_with_no_inferable_range_is_still_bounded(client, synthetic_bars, tmp_path, monkeypatch):
-    """`_infer_spec` gives no range to a non-positive int default, so the
-    declared-space check cannot fire and the backstop has to."""
+def test_a_param_left_out_of_space_cannot_be_overridden(client, synthetic_bars, tmp_path, monkeypatch):
+    """No declared range, no override: the param stays at its default rather
+    than being bounded by a guess."""
     _write_indicator(tmp_path, monkeypatch, 'ftk_offset', (
-        'import numpy as np\n'
         'from indicators.base import Indicator, Output\n'
         'class FtkOffset(Indicator):\n'
         '    params = {"offset": 0}\n'
@@ -1788,15 +1866,15 @@ def test_a_param_with_no_inferable_range_is_still_bounded(client, synthetic_bars
         '    def compute(self, ctx, sym):\n'
         '        return {"x": ctx.close(sym) + self.p["offset"]}\n'
     ))
-    assert client.get('/api/products/SA/indicators/ftk_offset?p=offset=5').status_code == 200
-    resp = client.get('/api/products/SA/indicators/ftk_offset?p=offset=99999999999')
+    assert client.get('/api/products/SA/indicators/ftk_offset').status_code == 200
+    resp = client.get('/api/products/SA/indicators/ftk_offset?p=offset=5')
     assert resp.status_code == 422, resp.text
-    assert 'implausibly large' in resp.json()['detail']
+    assert 'not in its `space`' in resp.json()['detail']
 
 
 @pytest.mark.parametrize('declaration, query, why', [
-    ('', 'p=period=99999999999', 'a number for a None default skipped the backstop'),
-    ('', 'p=period=nan', 'nor was it checked for being finite'),
+    ('    space = {"period": Int(2, 100)}\n', 'p=period=99999999999', 'a number for a None default skipped the bound'),
+    ('    space = {"period": Int(2, 100)}\n', 'p=period=nan', 'nor was it checked for being finite'),
     ('    space = {"period": Int(2, 100)}\n', 'p=period=500', 'or against its declared range'),
     ('    space = {"period": Int(2, 100)}\n', 'p=period=abc', 'a string against a numeric space'),
 ])
@@ -1821,9 +1899,10 @@ def test_a_param_with_a_none_default_is_still_bounded(
 
 def test_a_raising_constraint_is_the_users_error_not_a_500(client, synthetic_bars, tmp_path, monkeypatch):
     _write_indicator(tmp_path, monkeypatch, 'ftk_badconstraint', (
-        'from indicators.base import Indicator, Output\n'
+        'from indicators.base import Indicator, Int, Output\n'
         'class FtkBadconstraint(Indicator):\n'
         '    params = {"period": 14}\n'
+        '    space = {"period": Int(2, 100)}\n'
         '    constraints = (lambda p: p["no_such_param"] > 0,)\n'
         '    outputs = (Output("x"),)\n'
         '    def compute(self, ctx, sym):\n'

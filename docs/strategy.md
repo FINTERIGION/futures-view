@@ -32,8 +32,7 @@ Start from `strategies/my_strategy.py` if you want a template.
 | Attribute | Meaning |
 | --- | --- |
 | `params` | Dict of defaults; instance values live on `self.p`, overridden via `MyStrategy(**kw)` or `--param` |
-| `space` | Plausible range per param, `{name: Int / Float / Categorical}`, listed in the web panel's strategy catalog; undeclared params get one inferred from their default |
-| `fixed_params` | Params with no meaningful range, left out of `space` inference (default `('lots',)`) |
+| `space` | The tunable params and the range each is plausible over, `{name: Int / Float / Categorical}` |
 
 ## Lifecycle
 

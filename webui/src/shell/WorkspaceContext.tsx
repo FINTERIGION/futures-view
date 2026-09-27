@@ -18,6 +18,10 @@ export interface BacktestPrefill {
   end: string
   cash: number
   slippage: number
+  /** Effective parameter values stored with the run. `{}` is a run that used
+   * the strategy's defaults. The backtest form replaces that strategy's
+   * remembered parameters with these. */
+  params: Record<string, unknown>
 }
 
 interface Sequenced<T> {

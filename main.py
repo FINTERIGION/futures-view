@@ -16,6 +16,7 @@ import csv
 import datetime
 import glob
 import logging
+import math
 import os
 import re
 import socket
@@ -33,7 +34,7 @@ DEFAULT_SYMBOLS = [
 ]
 DEFAULT_START = '2020-01-01'
 DEFAULT_END = '2026-12-31'
-DEFAULT_CASH = 200_000.0
+DEFAULT_CASH = 100_000.0
 DEFAULT_SLIPPAGE = 0.0
 DEFAULT_STRATEGY = 'double_ma'
 
@@ -359,15 +360,48 @@ def cmd_web(args) -> None:
 # argparse wiring
 # ---------------------------------------------------------------------
 
+def _positive_cash(value: str) -> float:
+    """argparse type: a finite initial equity strictly above zero.
+
+    The same bound ``BacktestRequest.cash`` enforces. Zero cash used to run
+    and come back "blown up" on bar 0; a negative one is not an account.
+    """
+    try:
+        cash = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f'cash must be a number, got {value!r}') from e
+    if not math.isfinite(cash) or cash <= 0:
+        raise argparse.ArgumentTypeError(f'cash must be greater than 0, got {value!r}')
+    return cash
+
+
+def _non_negative_slippage(value: str) -> float:
+    """argparse type: a finite slippage of zero or more ticks.
+
+    The same bound ``BacktestRequest.slippage`` enforces. A negative value
+    fills every trade better than the market and inflates the whole run.
+    """
+    try:
+        slip = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f'slippage must be a number, got {value!r}') from e
+    if not math.isfinite(slip) or slip < 0:
+        raise argparse.ArgumentTypeError(
+            f'slippage must be greater than or equal to 0, got {value!r}'
+        )
+    return slip
+
+
 def _add_data_args(p) -> None:
     p.add_argument('--symbols', nargs='+', default=list(DEFAULT_SYMBOLS),
                     help=f'Products to load (default: {" ".join(DEFAULT_SYMBOLS)}; '
                          f'registered: {", ".join(list_products())})')
     p.add_argument('--start', default=DEFAULT_START, help="Start date 'YYYY-MM-DD'")
     p.add_argument('--end', default=DEFAULT_END, help="End date 'YYYY-MM-DD'")
-    p.add_argument('--cash', type=float, default=DEFAULT_CASH, help='Initial cash (CNY)')
-    p.add_argument('--slippage', type=float, default=DEFAULT_SLIPPAGE,
-                    help="Fill slippage in ticks, scaled per product by products.py's tick_size")
+    p.add_argument('--cash', type=_positive_cash, default=DEFAULT_CASH,
+                    help='Initial cash (CNY); must be greater than 0')
+    p.add_argument('--slippage', type=_non_negative_slippage, default=DEFAULT_SLIPPAGE,
+                    help="Fill slippage in ticks, zero or more, scaled per product by products.py's tick_size")
     p.add_argument('--update-data', action='store_true',
                     help='Refresh exchange data before running')
 

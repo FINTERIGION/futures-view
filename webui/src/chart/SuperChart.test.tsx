@@ -207,6 +207,9 @@ describe('editing an indicator’s params', () => {
     outputs: { rsi: { values: [], valid_from: 0 } },
   }
   const stored = () => JSON.parse(localStorage.getItem('ft.indicatorParams') ?? '{}')
+  // The backtest drawer below the chart has its own `fast` field and
+  // Defaults button, for the strategy's params.
+  const picker = () => within(screen.getByRole('dialog', { name: 'Indicators' }))
 
   beforeEach(() => {
     vi.mocked(indicatorsApi.list).mockResolvedValue(CATALOG)
@@ -260,13 +263,13 @@ describe('editing an indicator’s params', () => {
       return VALUES
     })
     const user = await openEditor('MA')
-    const fast = screen.getByLabelText('fast')
+    const fast = picker().getByLabelText('fast')
     await user.clear(fast)
     await user.type(fast, '30')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
     expect(await screen.findByText(/violate one of its declared constraints/)).toBeInTheDocument()
-    expect(screen.getByLabelText('fast')).toHaveValue(30)
+    expect(picker().getByLabelText('fast')).toHaveValue(30)
     expect(stored()).toEqual({})
   })
 
@@ -277,7 +280,7 @@ describe('editing an indicator’s params', () => {
     await waitFor(() => expect(indicatorsApi.values).toHaveBeenCalledWith('SA', 'rsi', { period: 21 }))
     expect(screen.getByLabelText('period')).toHaveValue(21)
 
-    await user.click(screen.getByRole('button', { name: 'Defaults' }))
+    await user.click(picker().getByRole('button', { name: 'Defaults' }))
     expect(screen.getByLabelText('period')).toHaveValue(14)
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 

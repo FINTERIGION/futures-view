@@ -100,7 +100,8 @@ export interface StrategyInfo {
   file: string
   docstring: string
   params: Record<string, unknown>
-  fixed_params: string[]
+  /** The tunable params and their ranges: exactly what the backtest form
+   * edits. A param left out runs at its default. */
   space: Record<string, SpaceSpec>
   space_error: string | null
   /** Why this entry cannot run: its module failed to import, its class
@@ -142,7 +143,6 @@ export interface IndicatorInfo {
   guides: number[]
   outputs: IndicatorOutput[]
   params: Record<string, unknown>
-  fixed_params: string[]
   space: Record<string, SpaceSpec>
   space_error: string | null
   /** Problems with the class's declaration, or the import error for a module

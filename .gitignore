@@ -44,4 +44,5 @@ indicators/*
 !indicators/donchian.py
 !indicators/keltner.py
 !indicators/obv.py
+!indicators/oi.py
 !indicators/my_indicator.py

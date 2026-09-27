@@ -31,17 +31,15 @@ class Strategy:
     """Subclass and implement ``setup``/``on_bar``. ``params`` is a class-level
     dict of defaults; instantiate with ``MyStrategy(**overrides)``.
 
-    ``space`` optionally declares the range each param is plausible over:
-    ``{param_name: Int(...) | Float(...) | Categorical(...)}``; the web
-    panel's strategy catalog lists it. Params not listed in ``space`` and not
-    in ``fixed_params`` get a heuristic range inferred from their default value
-    (see ``core.params.resolve_space``). ``fixed_params`` lists params that
-    have no meaningful range (position sizing, risk knobs, etc.).
+    ``space`` declares which params are tunable, and the range each is
+    plausible over: ``{param_name: Int(...) | Float(...) | Categorical(...)}``.
+    The web panel's backtest form edits exactly these. A param left out of
+    ``space`` (position sizing, a risk budget) runs at its default for every
+    web request; only the CLI's ``--param`` can still override it.
     """
 
     params: dict = {}
     space: dict = {}
-    fixed_params: tuple = ('lots',)
 
     def __init__(self, **overrides):
         self.p = {**type(self).params, **overrides}
