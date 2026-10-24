@@ -118,7 +118,7 @@ The panel uses three routes; they are also the quickest way to check a new class
 Values accept parameter overrides as repeated `p=name=value` — the same token as the CLI's `--param`:
 
 ```bash
-curl 'localhost:8000/api/products/SA/indicators/macd?p=fast=5&p=slow=40'
+curl 'localhost:8888/api/products/SA/indicators/macd?p=fast=5&p=slow=40'
 ```
 
 An override is refused with 422 if the class never declared that param, if the value falls outside its declared `space` (or that `space` entry is not an `Int` / `Float` / `Categorical`), or if it breaks — or raises inside — a `constraints` predicate. A number sent for a param whose default is `None` or a string is bounded the same way. Only names the registry discovered are accepted — a `'module:Class'` path is not, for the reason [Writing a Strategy](strategy.md) gives: the panel has no authentication and is bindable beyond localhost.

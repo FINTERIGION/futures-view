@@ -5,6 +5,7 @@ matching the "synthetic data, no real CSVs" convention in conftest.py.
 """
 
 import gzip
+import http.client
 import json
 import os
 import threading
@@ -578,6 +579,62 @@ def test_every_exchange_caches_under_its_own_subfolder(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Truncated bodies are transient, not fatal
+# --------------------------------------------------------------------------
+
+class _FakeHttpResp:
+    """A context-manager stand-in for ``urlopen``'s response."""
+
+    def __init__(self, body=None, error=None):
+        self.body = body
+        self.error = error
+
+    def read(self):
+        if self.error is not None:
+            raise self.error
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_http_bytes_retries_a_truncated_body(monkeypatch):
+    """IncompleteRead is raised from resp.read() after urlopen succeeded.
+
+    urllib does not wrap that as URLError, so it used to skip the retry loop
+    and kill a CZCE year-file sync.
+    """
+    payload = b'x' * 80
+    n = {'calls': 0}
+
+    def fake_open(*_a, **_k):
+        n['calls'] += 1
+        if n['calls'] < sources._RETRIES:
+            return _FakeHttpResp(error=http.client.IncompleteRead(b'x' * 10, 70))
+        return _FakeHttpResp(body=payload)
+
+    monkeypatch.setattr(sources.urllib.request, 'urlopen', fake_open)
+    monkeypatch.setattr(sources.time, 'sleep', lambda *_: None)
+    assert sources._http_bytes('http://example.test/f.txt', min_bytes=64) == payload
+    assert n['calls'] == sources._RETRIES
+
+
+def test_http_bytes_reraises_when_the_body_stays_truncated(monkeypatch):
+    monkeypatch.setattr(
+        sources.urllib.request, 'urlopen',
+        lambda *_a, **_k: _FakeHttpResp(
+            error=http.client.IncompleteRead(b'x' * 10, 70)
+        ),
+    )
+    monkeypatch.setattr(sources.time, 'sleep', lambda *_: None)
+    with pytest.raises(http.client.IncompleteRead):
+        sources._http_bytes('http://example.test/f.txt')
+
+
+# --------------------------------------------------------------------------
 # Download failures must be reported, never swallowed
 # --------------------------------------------------------------------------
 
@@ -613,7 +670,11 @@ def test_failures_do_not_accumulate_across_syncs(tmp_path):
     assert src.failures == []
 
 
-def test_czce_reports_a_failed_year_but_keeps_the_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize('error', [
+    urllib.error.URLError('down'),
+    http.client.IncompleteRead(b'partial', 100),
+])
+def test_czce_reports_a_failed_year_but_keeps_the_cache(tmp_path, monkeypatch, error):
     src = make_source(sources._CzceSource, 'SA', tmp_path)
     src.year = src.start_year                     # one year to try, and it fails
     path = src.cache_path(src.year)
@@ -622,7 +683,7 @@ def test_czce_reports_a_failed_year_but_keeps_the_cache(tmp_path, monkeypatch):
         fh.write(b'x' * 128)                      # a usable cache already on disk
 
     def boom(url, dest, headers=None):
-        raise urllib.error.URLError('down')
+        raise error
 
     monkeypatch.setattr(sources, '_http_download', boom)
     assert src.sync() == []

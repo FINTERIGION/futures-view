@@ -39,7 +39,7 @@ export DCE_API_KEY=...
 export DCE_SECRET=...
 ```
 
-Start the panel, then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+Start the panel, then open [http://127.0.0.1:8888](http://127.0.0.1:8888).
 
 ```bash
 python main.py web

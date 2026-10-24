@@ -12,7 +12,7 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 DB_PATH = os.path.join(RESULTS_DIR, 'webpanel.db')
 
 DEFAULT_HOST = '127.0.0.1'
-DEFAULT_PORT = 8000
+DEFAULT_PORT = 8888
 
 # Host header allowlist, enforced by HostHeaderMiddleware in `web.app`.
 #
@@ -115,7 +115,7 @@ def write_origin_allowed(origin, sec_fetch_site, raw_host: str, allowed=None) ->
 
     The Host check stops a rebinding page, whose requests carry the attacker's
     hostname. It does not stop an ordinary cross-site request: a page on any
-    site can POST straight to ``http://127.0.0.1:8000``, and that request's
+    site can POST straight to ``http://127.0.0.1:8888``, and that request's
     Host header is the panel's own. CORS does not stop it either. A POST whose
     body is a type-less Blob goes out with no Content-Type, which makes it a
     "simple" request sent without a preflight -- and FastAPI parses a body

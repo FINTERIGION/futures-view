@@ -9,7 +9,7 @@ Requires Node.js `^20.19` or `>=22.12` (Vite 8).
 Start the backend from the repo root, then the Vite dev server here:
 
 ```bash
-python main.py web      # API on http://127.0.0.1:8000
+python main.py web      # API on http://127.0.0.1:8888
 ```
 
 ```bash
@@ -18,7 +18,7 @@ npm install             # first time only
 npm run dev             # http://localhost:5173, hot reload
 ```
 
-The dev server proxies `/api` to `127.0.0.1:8000` (see `vite.config.ts`), and the backend accepts writes from the dev server's origin, so the UI works the same as when it is served by the backend.
+The dev server proxies `/api` to `127.0.0.1:8888` (see `vite.config.ts`), and the backend accepts writes from the dev server's origin, so the UI works the same as when it is served by the backend.
 
 ## Build
 

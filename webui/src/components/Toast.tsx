@@ -39,7 +39,7 @@ const TTL: Record<ToastKind, number> = {
  * This replaces the `window.alert` calls the run list used to make. An alert
  * blocks the whole tab -- including the SSE stream of any job still running
  * behind it -- until it is dismissed, it cannot be styled, and it says
- * "localhost:8000 says" above whatever the server actually reported. It is
+ * "localhost:8888 says" above whatever the server actually reported. It is
  * also the wrong shape for the two things this panel needs to announce: a
  * request the server refused, and a job that finished while the viewer was
  * looking at a different tab. Neither is a question.

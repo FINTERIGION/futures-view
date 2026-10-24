@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import gzip
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -56,6 +57,15 @@ _USER_AGENT = (
 )
 _TIMEOUT = 45
 _RETRIES = 3
+# IncompleteRead is raised from resp.read() after urlopen has already
+# succeeded, so urllib never wraps it as URLError. Without it here a
+# truncated CZCE year file skipped the retry loop and killed the job.
+_TRANSIENT = (
+    urllib.error.URLError,
+    TimeoutError,
+    ValueError,
+    http.client.IncompleteRead,
+)
 
 _ISO = '%Y-%m-%d'
 _COMPACT = '%Y%m%d'
@@ -114,7 +124,8 @@ def _http_bytes(url: str, headers: dict = None, min_bytes: int = 0) -> bytes:
     """GET ``url`` and return the body.
 
     A 404 raises :class:`NoDataForDate` -- most SHFE holidays answer that way.
-    400/403 fail fast; everything else is retried with backoff.
+    400/403 fail fast; a truncated body and other transient network errors
+    are retried with backoff.
 
     ``min_bytes`` rejects a suspiciously short body as a failed transfer. Only
     the CZCE text files use it: a short JSON body is a perfectly valid "no
@@ -139,7 +150,7 @@ def _http_bytes(url: str, headers: dict = None, min_bytes: int = 0) -> bytes:
                 break
             if attempt < _RETRIES:
                 time.sleep(1.5 ** attempt)
-        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except _TRANSIENT as exc:
             last_error = exc
             if attempt < _RETRIES:
                 time.sleep(1.5 ** attempt)
@@ -171,7 +182,7 @@ def _post_json(url: str, payload: dict, headers: dict = None) -> dict:
             request = urllib.request.Request(url, data=body, headers=hdrs, method='POST')
             with urllib.request.urlopen(request, timeout=_TIMEOUT) as resp:
                 return json.loads(resp.read().decode('utf-8'))
-        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        except _TRANSIENT as exc:
             last_error = exc
             if attempt < _RETRIES:
                 time.sleep(1.5 ** attempt)
@@ -424,10 +435,8 @@ class _CzceSource(ExchangeSource):
             except (
                 NoDataForDate,
                 urllib.error.HTTPError,
-                urllib.error.URLError,
-                TimeoutError,
-                ValueError,
                 OSError,
+                *_TRANSIENT,
             ) as exc:
                 if os.path.exists(path) and os.path.getsize(path) > 64:
                     self.failures.append(str(year))
