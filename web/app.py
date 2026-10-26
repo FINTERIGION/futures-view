@@ -20,7 +20,7 @@ from web.config import (
     DEV_ORIGINS, STATIC_DIR, UNSAFE_METHODS, allowed_hosts, allowed_origins, host_allowed,
     is_within, write_origin_allowed,
 )
-from web.routers import backtest, data, indicators, jobs, products, runs, strategies
+from web.routers import alerts, backtest, data, indicators, jobs, products, runs, strategies
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(message)s')
 
@@ -122,7 +122,7 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
-for router in (products, data, strategies, indicators, backtest, runs, jobs):
+for router in (products, data, strategies, indicators, backtest, alerts, runs, jobs):
     app.include_router(router.router)
 
 

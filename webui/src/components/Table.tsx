@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from './Icon'
 
@@ -21,6 +21,8 @@ export function Table<T>({
   rowClassName,
   emptyMessage,
   maxHeight,
+  isExpanded,
+  renderExpanded,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -29,6 +31,11 @@ export function Table<T>({
   rowClassName?: (row: T) => string | undefined
   emptyMessage?: string
   maxHeight?: number | string
+  /** When true, `renderExpanded` is drawn as a full-width row immediately
+   * under this one — the selected alert's product list sits here, not in a
+   * second card that repeats the strategy name. */
+  isExpanded?: (row: T) => boolean
+  renderExpanded?: (row: T) => ReactNode
 }) {
   const { t } = useTranslation()
   if (rows.length === 0) {
@@ -54,20 +61,30 @@ export function Table<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className={rowClassName?.(row)}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              style={onRowClick ? { cursor: 'pointer' } : undefined}
-            >
-              {columns.map((col) => (
-                <td key={col.key} className={col.numeric ? 'col-num' : undefined}>
-                  {col.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const key = rowKey(row)
+            const expanded = Boolean(isExpanded?.(row) && renderExpanded)
+            return (
+              <Fragment key={key}>
+                <tr
+                  className={rowClassName?.(row)}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  style={onRowClick ? { cursor: 'pointer' } : undefined}
+                >
+                  {columns.map((col) => (
+                    <td key={col.key} className={col.numeric ? 'col-num' : undefined}>
+                      {col.render(row)}
+                    </td>
+                  ))}
+                </tr>
+                {expanded && (
+                  <tr className="row-expand">
+                    <td colSpan={columns.length}>{renderExpanded!(row)}</td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>

@@ -98,6 +98,19 @@ export const backtestApi = {
   start: (body: BacktestParams) => api.post<{ job_id: string; run_id: string }>('/backtest', body),
 }
 
+export interface AlertPreviewParams {
+  strategy: string
+  symbols: string[]
+  /** Remembered overrides for this strategy; omitted, the class defaults run. */
+  params?: Record<string, unknown>
+  start?: string
+  end?: string
+}
+
+export const alertsApi = {
+  preview: (body: AlertPreviewParams) => api.post<{ job_id: string }>('/alerts/preview', body),
+}
+
 export const runsApi = {
   list: (kind?: string) => api.get<RunSummary[]>(`/runs${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
   get: (id: string) => api.get<RunDetail>(`/runs/${seg(id)}`),

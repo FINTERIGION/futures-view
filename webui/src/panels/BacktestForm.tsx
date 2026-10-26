@@ -1,19 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import type { StrategyInfo } from '../api/types'
-import { editableParams, type ParamError, type ParamFieldErrors } from '../chart/indicatorParams'
+import type { ParamFieldErrors } from '../chart/indicatorParams'
+import { StrategyParamFields } from './StrategyParamFields'
 
 /** Windows worth one click. A backtest is nearly always run over "the last
  * few years", and typing two ISO dates to say so was the most repeated
  * keystroke in this form. */
 const RANGE_PRESETS = [1, 3, 5, 10]
-
-const PARAM_ERROR_KEYS: Record<ParamError, string> = {
-  required: 'workspace.paramRequired',
-  number: 'workspace.paramNotNumber',
-  integer: 'workspace.paramNotInteger',
-  range: 'workspace.paramOutOfRange',
-  choice: 'workspace.paramNotAChoice',
-}
 
 /** `YYYY-MM-DD` of `d` on the user's own calendar. Not `toISOString()`, which
  * is the UTC date: east of Greenwich that is still yesterday for the first
@@ -85,14 +78,6 @@ export function BacktestForm({
   // its file stopped compiling left whoever saved it nowhere to read why.
   const broken = strategies.filter((s) => s.errors.length > 0)
   const strategy = strategies.find((s) => s.key === strategyKey)
-  const paramNames = strategy ? editableParams(strategy) : []
-  // The class defaults, as the inputs would show them. A field the user has
-  // not touched matches; an out-of-range or half-typed value does not, so
-  // the button stays available as the way back.
-  const paramsAtDefaults =
-    strategy !== undefined &&
-    paramNames.every((name) => (paramDraft[name] ?? '') === String(strategy.params[name]))
-
   return (
     <>
       <div className="field">
@@ -127,66 +112,14 @@ export function BacktestForm({
         )}
       </div>
 
-      {strategy && paramNames.length > 0 && (
-        <div className="form-grid">
-          {paramNames.map((name) => {
-            const spec = strategy.space[name]
-            const fallback = strategy.params[name]
-            const error = paramErrors[name]
-            const ranged = spec && spec.kind !== 'categorical' && spec.low !== undefined && spec.high !== undefined
-            const hint = ranged
-              ? t('workspace.paramHint', { low: spec.low, high: spec.high, value: String(fallback) })
-              : t('workspace.paramHintNoRange', { value: String(fallback) })
-            const choices =
-              spec?.kind === 'categorical' ? (spec.choices ?? []) : typeof fallback === 'boolean' ? [true, false] : null
-            return (
-              <div className="field" key={name}>
-                <label htmlFor={`param-${name}`}>{name}</label>
-                {choices ? (
-                  <select
-                    id={`param-${name}`}
-                    value={paramDraft[name] ?? ''}
-                    onChange={(e) => onParamDraftChange(name, e.target.value)}
-                  >
-                    {choices.map((c) => (
-                      <option key={String(c)} value={String(c)}>
-                        {String(c)}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    id={`param-${name}`}
-                    type={typeof fallback === 'number' ? 'number' : 'text'}
-                    step={spec?.kind === 'int' ? 1 : 'any'}
-                    min={ranged ? spec.low : undefined}
-                    max={ranged ? spec.high : undefined}
-                    value={paramDraft[name] ?? ''}
-                    className={error ? 'invalid' : undefined}
-                    aria-invalid={Boolean(error)}
-                    onChange={(e) => onParamDraftChange(name, e.target.value)}
-                  />
-                )}
-                {error ? (
-                  <span className="field-error">{t(PARAM_ERROR_KEYS[error], { low: spec?.low, high: spec?.high })}</span>
-                ) : (
-                  <span className="field-hint">{hint}</span>
-                )}
-              </div>
-            )
-          })}
-          <div className="field field-wide">
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              disabled={paramsAtDefaults}
-              onClick={onResetParams}
-              title={t('workspace.resetIndicatorParams')}
-            >
-              {t('workspace.resetParams')}
-            </button>
-          </div>
-        </div>
+      {strategy && (
+        <StrategyParamFields
+          strategy={strategy}
+          paramDraft={paramDraft}
+          onParamDraftChange={onParamDraftChange}
+          onResetParams={onResetParams}
+          paramErrors={paramErrors}
+        />
       )}
 
       <div className="field">

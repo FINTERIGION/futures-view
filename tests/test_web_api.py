@@ -356,6 +356,74 @@ def test_backtest_end_to_end_through_the_api(client):
     assert client.get(f'/api/runs/{run_id}').status_code == 404
 
 
+def _wait_job(client, job_id, timeout_ticks=200):
+    job = None
+    for _ in range(timeout_ticks):
+        job = client.get(f'/api/jobs/{job_id}').json()
+        if job['status'] in ('done', 'error'):
+            break
+        time.sleep(0.1)
+    return job
+
+
+def test_alert_preview_end_to_end_through_the_api(client):
+    before = len(store_module.list_runs(limit=1000))
+    resp = client.post('/api/alerts/preview', json={
+        'strategy': 'double_ma',
+        'symbols': ['SA'],
+        'start': '2024-01-01',
+        'end': '2024-06-01',
+    })
+    assert resp.status_code == 200, resp.text
+    assert 'run_id' not in resp.json()
+    job_id = resp.json()['job_id']
+
+    job = _wait_job(client, job_id)
+    assert job['status'] == 'done', job
+    snap = job['result']
+    json.dumps(job)
+    assert snap['asof'] and len(snap['asof']) == 10
+    assert snap['blown_up'] is False
+    assert len(snap['symbols']) == 1
+    row = snap['symbols'][0]
+    assert row['symbol'] == 'SA'
+    assert row['contract']
+    assert row['operation'] in (
+        'flat', 'hold', 'open_long', 'open_short',
+        'close', 'reverse', 'add', 'reduce',
+    )
+    assert set(row['stop']) == {'price', 'distance'}
+    assert set(row['take_profit']) == {'price', 'distance'}
+    dumped = json.dumps(snap)
+    assert 'lots' not in dumped
+    assert '"size"' not in dumped
+    assert len(store_module.list_runs(limit=1000)) == before
+
+
+def test_alert_preview_refuses_params_outside_space_and_does_not_create_a_run(client):
+    before = len(store_module.list_runs(limit=1000))
+    resp = client.post('/api/alerts/preview', json={
+        'strategy': 'double_ma', 'symbols': ['SA'],
+        'params': {'fast_period': 999},
+    })
+    assert resp.status_code == 422, resp.text
+    assert 'outside its declared range' in resp.json()['detail']
+    assert len(store_module.list_runs(limit=1000)) == before
+
+
+def test_alert_preview_refuses_a_module_path_strategy_without_importing_it(client, tmp_path, monkeypatch):
+    before = len(store_module.list_runs(limit=1000))
+    marker = _import_probe(tmp_path, monkeypatch, 'ftk_probe_alert')
+    resp = client.post('/api/alerts/preview', json={
+        'strategy': 'ftk_probe_alert:NotAStrategy',
+        'symbols': ['SA'],
+    })
+    assert resp.status_code == 422, resp.text
+    assert not marker.exists(), 'the request body got to import a module'
+    assert 'ftk_probe_alert' not in sys.modules
+    assert len(store_module.list_runs(limit=1000)) == before
+
+
 @pytest.mark.parametrize('path, model, extra', [
     ('/api/backtest', BacktestRequest, {}),
 ])
@@ -383,7 +451,7 @@ def test_negative_slippage_is_refused(client, path, model, extra):
     assert model(**base, **extra).slippage == 0.0
 
 
-@pytest.mark.parametrize('path', ['/api/backtest'])
+@pytest.mark.parametrize('path', ['/api/backtest', '/api/alerts/preview'])
 def test_an_empty_symbol_list_is_a_422_not_a_500(client, path):
     """``require_products`` reports an unknown product as ``KeyError`` but an
     empty list as ``ValueError``, and both handlers used to catch only the

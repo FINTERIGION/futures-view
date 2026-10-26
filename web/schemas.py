@@ -107,3 +107,38 @@ class BacktestRequest(BaseModel):
         if self.start > self.end:
             raise ValueError(f'start {self.start} is after end {self.end}')
         return self
+
+
+# Alert previews replay the engine up to the latest bar but are not a run:
+# nothing is written to history, and the form does not ask for cash, slippage,
+# or a window. The window still has to be a pair of real dates in order so a
+# caller who *does* name one cannot sneak a reversed range past the job.
+_ALERT_START = '2018-01-01'
+
+
+class AlertPreviewRequest(BaseModel):
+    strategy: str
+    symbols: List[str]
+    params: Dict[str, object] = Field(default_factory=dict)
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+    @field_validator('start', 'end')
+    @classmethod
+    def _iso_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            return datetime.date.fromisoformat(value.strip()).isoformat()
+        except ValueError:
+            raise ValueError(f'expected a date as YYYY-MM-DD, got {value!r}') from None
+
+    @model_validator(mode='after')
+    def _default_window_in_order(self):
+        if self.start is None:
+            self.start = _ALERT_START
+        if self.end is None:
+            self.end = datetime.date.today().isoformat()
+        if self.start > self.end:
+            raise ValueError(f'start {self.start} is after end {self.end}')
+        return self

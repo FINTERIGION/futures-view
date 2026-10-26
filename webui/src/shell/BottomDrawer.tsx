@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Icon } from '../components/Icon'
 import type { TabItem } from '../components/Tabs'
 import { Tabs } from '../components/Tabs'
+import { AlertPanel } from '../panels/AlertPanel'
 import { BacktestPanel } from '../panels/BacktestPanel'
 import { HistoryPanel } from '../panels/HistoryPanel'
 import { useDrawerResize } from './useDrawerResize'
@@ -12,7 +13,7 @@ import { useWorkspace } from './WorkspaceContext'
  * Not a variant of `components/Drawer` -- that one is a modal, right-side
  * portal with a backdrop, and the bottom drawer must never be modal: the
  * chart above it stays interactive (zoomable, hoverable) while this is
- * open. Backtest and History are tabs here rather than routes, so switching
+ * open. Alert, Backtest and History are tabs here rather than routes, so switching
  * between them no longer costs whatever the previous tab's page held in
  * state -- notably a live job's SSE stream, now held one level up in
  * `JobsProvider` instead of inside whichever panel started it.
@@ -24,6 +25,7 @@ export function BottomDrawer() {
   const { onPointerDown, onHandleKeyDown } = useDrawerResize(drawerHeight, setDrawerHeight)
 
   const tabs: TabItem[] = [
+    { key: 'alerts', label: t('workspace.tabAlert') },
     { key: 'backtest', label: t('workspace.tabBacktest') },
     { key: 'runs', label: t('workspace.tabRuns') },
   ]
@@ -84,6 +86,7 @@ export function BottomDrawer() {
             BacktestPanel's own doc comment for why that has to be a remount
             rather than a prop change an effect reacts to. */}
         {drawerTab === 'backtest' && <BacktestPanel key={backtestPrefill?.seq ?? 0} prefill={backtestPrefill?.value} />}
+        {drawerTab === 'alerts' && <AlertPanel />}
         {drawerTab === 'runs' && <HistoryPanel />}
       </div>
     </div>

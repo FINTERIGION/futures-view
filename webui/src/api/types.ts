@@ -241,6 +241,35 @@ export interface RunPrice {
 
 // -------------------------------------------------------------------------
 
+export type AlertOperation =
+  | 'flat'
+  | 'hold'
+  | 'open_long'
+  | 'open_short'
+  | 'close'
+  | 'reverse'
+  | 'add'
+  | 'reduce'
+
+export interface AlertLevel {
+  price: number | null
+  distance: number | null
+}
+
+export interface AlertSymbolRow {
+  symbol: string
+  contract: string
+  operation: AlertOperation
+  stop: AlertLevel
+  take_profit: AlertLevel
+}
+
+export interface AlertSnapshot {
+  asof: string | null
+  blown_up: boolean
+  symbols: AlertSymbolRow[]
+}
+
 export interface JobState {
   id: string
   kind: string

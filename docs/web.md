@@ -26,6 +26,7 @@ Two checks stop a web page you have open from driving the API through your brows
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Product sidebar | Every registered product with its data coverage, a per-product download and edit, and Update All. Adding or editing a product opens a drawer with the registry form and a candlestick chart with a roll-contract overlay                                                                                                                                         |
 | Main chart      | The charted product's OI-weighted daily candles and roll points, the indicators ticked in the picker, and the fills and window of the run currently opened                                                                                                                                                                                                       |
+| Alert tab       | A history-style list of saved strategies. Creating one edits that strategy's params the same way the Backtest tab does. Clicking a row replays it over its stored universe to the latest bar and expands the per-product table immediately under that row — trading contract, next action, and any stop or take-profit |
 | Backtest tab    | Run any discovered strategy over the sidebar's universe and a date range; metric tiles, equity curve, trade log, per-symbol and per-exit-reason breakdowns. The form edits exactly the params the strategy lists in `space`; the rest run at the class default. Opening a past run refills the fields with the values that run used                              |
 | History tab     | Past runs: open one to overlay it on the chart and refill the backtest form, or delete it                                                                                                                                                                                                                                                                        |
 | Indicators      | The chart toolbar's picker lists every class under `indicators/`; ticking one overlays it on the price pane or gives it a sub-pane, per the class's own declaration. Each row shows its current params, and the pencil that appears on hover edits them in place; see [Editing params](#editing-indicator-params) below and [Writing an Indicator](indicator.md) |
@@ -73,14 +74,14 @@ web/                      FastAPI backend
   store.py                  SQLite run-history index (results/webpanel.db)
   serialize.py              JSON-safe conversion (inf/NaN/date/numpy)
   schemas.py                Pydantic request models
-  routers/                  products, data, strategies, indicators, backtest, runs, jobs
+  routers/                  products, data, strategies, indicators, backtest, alerts, runs, jobs
 
 webui/                    Vite + React + TypeScript frontend
   src/api/                   Typed fetch client + endpoint functions
   src/charts/                ECharts option builders (the main chart, candlestick, line)
   src/chart/                 The main super chart, its toolbar and indicator picker
   src/shell/                 Workspace shell: top bar, sidebar, bottom drawer, shortcuts
-  src/panels/                What the bottom drawer's tabs hold (backtest form, results, history)
+  src/panels/                What the bottom drawer's tabs hold (backtest form, results, alerts, history)
   src/components/            Card, Table, Drawer, Tabs, EChart, JobProgress, Toast, Icon, ...
   src/theme/                 Light/dark mode + the chart colour palette
   src/index.css              Design tokens -- every colour, space and radius below it

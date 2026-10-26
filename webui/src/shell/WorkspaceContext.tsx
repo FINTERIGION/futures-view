@@ -2,8 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useSearchParams } from 'react-router-dom'
 import { useStickyState } from '../hooks/useStickyState'
 
-export type DrawerTab = 'backtest' | 'runs'
-const DRAWER_TABS: DrawerTab[] = ['backtest', 'runs']
+export type DrawerTab = 'alerts' | 'backtest' | 'runs'
+const DRAWER_TABS: DrawerTab[] = ['alerts', 'backtest', 'runs']
 
 export interface BacktestPrefill {
   strategy: string
@@ -45,8 +45,8 @@ interface WorkspaceState {
   toggleUniverse: (symbol: string) => void
   setExtraSymbols: (symbols: string[]) => void
   /** `[chartSymbol, ...extraSymbols]`, de-duplicated -- the only place this
-   * union is computed, so a backtest run and the sidebar's checkboxes can
-   * never disagree about who is in it. */
+   * union is computed, so a backtest run, an alert preview, and the sidebar's
+   * checkboxes can never disagree about who is in it. */
   universe: string[]
 
   /** The backtest run currently overlaid on the chart. URL-only

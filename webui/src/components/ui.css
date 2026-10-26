@@ -507,6 +507,35 @@ table.dtable {
   cursor: default;
 }
 
+/* Detail drawn under a selected row (the Alert tab's product list). Not a
+   second hit target, so hover must not tint it like the row above. */
+.dtable tbody tr.row-expand,
+.dtable tbody tr.row-expand:hover {
+  background: transparent;
+}
+
+.dtable tbody tr.row-expand > td {
+  padding: 0;
+  white-space: normal;
+  border-bottom: 1px solid var(--border);
+}
+
+.dtable tbody tr.row-expand .dtable-wrap {
+  border: none;
+  border-radius: 0;
+}
+
+.alert-expand {
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+}
+
+.alert-expand-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
 /* A figure whose sign is the point -- a trade's net PnL. Inline colour on the
    cell rather than a row tint: the sign belongs to that one number, and
    tinting the whole row would collide with selection and hover. */

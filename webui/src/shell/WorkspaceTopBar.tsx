@@ -12,6 +12,7 @@ const LANGS: { code: string; label: string }[] = [
 const SLOT_LABEL_KEY = {
   backtest: 'workspace.tabBacktest',
   data: 'data.title',
+  alert: 'workspace.tabAlert',
 } as const
 
 export function WorkspaceTopBar({
@@ -25,7 +26,7 @@ export function WorkspaceTopBar({
   const { chartSymbol } = useWorkspace()
   const jobs = useJobs()
 
-  const activePills = (['backtest', 'data'] as const)
+  const activePills = (['backtest', 'data', 'alert'] as const)
     .map((slot) => ({ slot, state: jobs[slot].state }))
     .filter((j) => j.state && ['queued', 'running'].includes(j.state.status))
 

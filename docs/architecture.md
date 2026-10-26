@@ -11,6 +11,7 @@ futures-view/
 │   ├── ledger.py              #   fill-driven logical trade ledger
 │   ├── engine.py              #   four-phase day loop, rolls, stops, deferral
 │   ├── backtest.py            #   run_single_backtest: one run, engine + metrics
+│   ├── alert.py               #   run_alert_snapshot: last-bar pending action / SL / TP
 │   ├── metrics.py             #   performance metrics
 │   ├── indicators.py          #   TA-Lib NaN guard
 │   ├── registry.py            #   folder-scan discovery shared by strategies/ and indicators/
@@ -43,7 +44,7 @@ futures-view/
 │   ├── marketcache.py         #   load_market + an LRU over it
 │   ├── barscache.py           #   LRU over DataManager.load_dataframe (chart + indicator reads)
 │   ├── static/                #   built frontend (gitignored; `npm run build` writes here)
-│   └── routers/               #   products, data, strategies, indicators, backtest, runs, jobs
+│   └── routers/               #   products, data, strategies, indicators, backtest, alerts, runs, jobs
 ├── webui/                     # Web panel frontend (Vite + React + TypeScript)
 │   └── src/                   #   api client, ECharts option builders, workspace shell, panels, i18n (en/zh)
 ├── tests/                     # pytest suite (synthetic MarketData fixtures)

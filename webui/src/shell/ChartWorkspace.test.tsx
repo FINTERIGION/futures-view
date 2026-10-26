@@ -1,9 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { backtestApi, dataApi, indicatorsApi, jobsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
+import { alertsApi, backtestApi, dataApi, indicatorsApi, jobsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
 import { MockEventSource } from '../test/setup'
 import { INDICATORS, PRODUCTS, STRATEGIES, renderWorkspace, runDetail, runRow } from '../test/utils'
+import { resetAlertPreviewState } from '../panels/AlertPanel'
 import { ChartWorkspace } from './ChartWorkspace'
 
 vi.mock('../api/endpoints', () => ({
@@ -11,6 +12,7 @@ vi.mock('../api/endpoints', () => ({
   dataApi: { update: vi.fn() },
   strategiesApi: { list: vi.fn() },
   backtestApi: { start: vi.fn() },
+  alertsApi: { preview: vi.fn() },
   runsApi: { list: vi.fn(), get: vi.fn(), price: vi.fn(), remove: vi.fn() },
   jobsApi: { get: vi.fn(), cancel: vi.fn(), streamUrl: (id: string) => `/api/jobs/${id}/stream` },
   indicatorsApi: { list: vi.fn(), get: vi.fn(), values: vi.fn(), reload: vi.fn() },
@@ -20,6 +22,7 @@ vi.mock('../api/endpoints', () => ({
 vi.mock('../components/EChart', () => ({ EChart: () => <div data-testid="chart" /> }))
 
 beforeEach(() => {
+  resetAlertPreviewState()
   vi.mocked(productsApi.list).mockResolvedValue(PRODUCTS)
   vi.mocked(indicatorsApi.list).mockResolvedValue(INDICATORS)
   vi.mocked(productsApi.bars).mockResolvedValue({ symbol: 'SA', bars: [] })
@@ -141,6 +144,51 @@ describe('the product sidebar', () => {
 
     await user.click(cfRow)
     expect(cfRow).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('single-clicking a product is what the next saved alert will snapshot as its universe', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=alerts' })
+
+    const list = await screen.findByRole('listbox')
+    const cfRow = await findProductRow(list, 'CF')
+    await user.click(cfRow)
+    expect(cfRow).toHaveAttribute('aria-selected', 'true')
+
+    await user.click(await screen.findByRole('button', { name: 'Add' }))
+    const drawer = document.querySelector('.bdrawer-body')!
+    await waitFor(() => expect(within(drawer as HTMLElement).getByText('CF')).toBeInTheDocument())
+  })
+
+  it('lists Alert before Backtest in the drawer tab bar', async () => {
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+    await screen.findByRole('button', { name: 'Alert' })
+    const labels = [...document.querySelectorAll('.bdrawer-tabbar .tab')].map((el) => el.textContent)
+    expect(labels).toEqual(['Alert', 'Backtest', 'Backtest History'])
+  })
+
+  it('does not re-preview a saved alert when a product is ticked into the sidebar', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      'ft.alertEntries',
+      JSON.stringify([{ id: 'e1', strategy: 'double_ma', symbols: ['SA'], params: {}, createdAt: 1 }]),
+    )
+    localStorage.setItem('ft.alertActiveId', JSON.stringify('e1'))
+    vi.mocked(alertsApi.preview).mockResolvedValue({ job_id: 'aj1' })
+
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=alerts' })
+    await waitFor(() =>
+      expect(alertsApi.preview).toHaveBeenCalledWith(expect.objectContaining({ symbols: ['SA'] })),
+    )
+
+    const list = await screen.findByRole('listbox')
+    const cfRow = await findProductRow(list, 'CF')
+    await user.click(cfRow)
+
+    // The row already stored its universe. Checking CF into the backtest
+    // pool must not silently rewrite this alert and fire another replay.
+    await waitFor(() => expect(cfRow).toHaveAttribute('aria-selected', 'true'))
+    expect(alertsApi.preview).toHaveBeenCalledTimes(1)
   })
 
   it('double-clicking a product switches the main chart to it; single-clicking the charted row is a no-op on the universe', async () => {
