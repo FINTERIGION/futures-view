@@ -15,9 +15,7 @@ npm install           # first time only
 npm run build         # writes to ../web/static
 ```
 
-`python main.py web --host 0.0.0.0` binds beyond localhost; the panel has no authentication and can rewrite the product registry and delete data files, so only do this on a network you trust.
-
-Two checks stop a web page you have open from driving the API through your browser. Every request must carry a Host header naming the panel (`FT_WEB_ALLOWED_HOSTS` widens the list), and every write (POST/PUT/PATCH/DELETE) that carries an `Origin` must come from the panel's own address or the Vite dev server, or it is refused with 403. Behind a reverse proxy that rewrites the Host header, list the public origin in `FT_WEB_ALLOWED_ORIGINS`, e.g. `https://panel.example`.
+`python main.py web --host 0.0.0.0` binds beyond localhost. The API is open to whoever can reach the process, which is the local-research default. Set an access password (optional) first, then expose it past this machine. If you forget the password, stop the server and start it with `python main.py web --clear-password`. That drops the hash and every login session, then serves the panel open again so you can set a new one.
 
 ## What it does
 
@@ -44,6 +42,7 @@ The panel is one screen, not a set of routed pages: a chart filling the width, a
 | Product row | Click toggles it into the backtest universe (the tick box at the head of the row); double-click charts it. The charted product is always in the universe, so its box is drawn ticked and dimmed. The dot on the right is coverage — filled green fresh, amber stale, hollow never downloaded — and hovering the row reveals per-product download and edit buttons |
 | Search      | `/` jumps to it from anywhere; ↑/↓ move a highlight through the matches and Enter charts the highlighted one. Escape clears the filter, then gives the keyboard back to the chart                                                                                                                                                                                 |
 | Theme       | Light, dark, or follow the OS — the switch in the top bar. The choice is remembered per browser, and the charts follow it, since their colours are baked into the canvas rather than read from CSS                                                                                                                                                                |
+| Web access  | The lock icon in the top bar. Optional password for reaching the panel from another machine or the public internet; this browser stays signed in after you set it. A forgotten password is cleared with `python main.py web --clear-password`                                                                                                                     |
 | Shortcuts   | `Ctrl/⌘+B` sidebar, `Ctrl/⌘+J` bottom drawer, `Ctrl/⌘+Enter` run the backtest, `?` for the full list                                                                                                                                                                                                                                                              |
 
 
@@ -66,20 +65,22 @@ Overrides are stored per browser (`ft.indicatorParams` in `localStorage`), and o
 
 ```
 web/                      FastAPI backend
-  app.py                    App + SPA static mount (launched by `main.py web`)
+  app.py                    App + SPA static mount + Host / Origin / optional-password middleware
   config.py                 Paths, host/port defaults
+  auth.py                   Password hash, session cookies, login rate limit
   jobs.py                   Background job manager (thread pool + SSE)
   marketcache.py            load_market + an LRU over it
   barscache.py              LRU over DataManager.load_dataframe (chart + indicator reads)
-  store.py                  SQLite run-history index (results/webpanel.db)
+  store.py                  SQLite run-history index + access-password rows (results/webpanel.db)
   serialize.py              JSON-safe conversion (inf/NaN/date/numpy)
   schemas.py                Pydantic request models
-  routers/                  products, data, strategies, indicators, backtest, alerts, runs, jobs
+  routers/                  auth, products, data, strategies, indicators, backtest, alerts, runs, jobs
 
 webui/                    Vite + React + TypeScript frontend
   src/api/                   Typed fetch client + endpoint functions
   src/charts/                ECharts option builders (the main chart, candlestick, line)
   src/chart/                 The main super chart, its toolbar and indicator picker
+  src/auth/                  Optional access-password gate, login screen, settings drawer
   src/shell/                 Workspace shell: top bar, sidebar, bottom drawer, shortcuts
   src/panels/                What the bottom drawer's tabs hold (backtest form, results, alerts, history)
   src/components/            Card, Table, Drawer, Tabs, EChart, JobProgress, Toast, Icon, ...

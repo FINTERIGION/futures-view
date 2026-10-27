@@ -327,10 +327,34 @@ def _panel_allowed_hosts(bind_host: str) -> list:
     return hosts
 
 
+def _off_loopback_warning(host: str, password_set: bool, host_note: str) -> str:
+    """The warning ``cmd_web`` prints when the panel is bound past loopback.
+
+    The Host-header note is appended either way. The password clause is the
+    part that changes: without one this is still an open rewrite-and-delete
+    surface, and the lock icon in the panel is how to close it.
+    """
+    if password_set:
+        return (
+            f'Binding to {host}: a web access password is set, but this still '
+            f'exposes the panel to whatever can reach this address.{host_note}'
+        )
+    return (
+        f'Binding to {host}: this panel has no access password and can rewrite '
+        f'the product registry and delete data files. Set one from the lock '
+        f'icon in the panel before exposing it past localhost. Only do this '
+        f'on a network you trust.{host_note}'
+    )
+
+
 def cmd_web(args) -> None:
     import uvicorn
 
+    from web.auth import clear_password, password_is_set
     from web.config import ALLOWED_HOSTS_ENV
+
+    if args.clear_password:
+        clear_password()
 
     if args.host not in _LOOPBACK_BINDS:
         # The panel refuses a Host header it does not recognise, which is what
@@ -348,11 +372,7 @@ def cmd_web(args) -> None:
             )
         else:
             host_note = f' Host header restricted to {ALLOWED_HOSTS_ENV}.'
-        logger.warning(
-            'Binding to %s: this panel has no authentication and can rewrite the '
-            'product registry and delete data files. Only do this on a network '
-            'you trust.%s', args.host, host_note,
-        )
+        logger.warning('%s', _off_loopback_warning(args.host, password_is_set(), host_note))
     uvicorn.run('web.app:app', host=args.host, port=args.port, reload=args.reload)
 
 
@@ -441,6 +461,10 @@ def _parse_args(argv=None) -> argparse.Namespace:
     p.add_argument('--host', default=DEFAULT_HOST)
     p.add_argument('--port', type=int, default=DEFAULT_PORT)
     p.add_argument('--reload', action='store_true')
+    p.add_argument(
+        '--clear-password', action='store_true',
+        help='Forget the web access password and every login session, then start.',
+    )
     p.set_defaults(func=cmd_web)
 
     return parser.parse_args(argv)

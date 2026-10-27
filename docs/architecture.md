@@ -34,17 +34,18 @@ futures-view/
 │   ├── products.py            #   registry loader/validator over products.json (multiplier, margin, commission, roll months)
 │   └── roll_calendar.py       #   date → main-month contract map (from products.py)
 ├── web/                       # Web panel backend (FastAPI) -- see docs/web.md
-│   ├── app.py                 #   app + SPA static mount (launched by `main.py web`)
+│   ├── app.py                 #   app + SPA static mount + Host / Origin / optional-password middleware
 │   ├── config.py              #   paths, defaults, retention caps, path-containment check
+│   ├── auth.py                #   optional web-access password, session cookies
 │   ├── schemas.py             #   pydantic request models
 │   ├── jobs.py                #   background job manager (thread pool + SSE)
-│   ├── store.py               #   SQLite run-history index (results/webpanel.db)
+│   ├── store.py               #   SQLite run-history index + access-password rows (results/webpanel.db)
 │   ├── data_status.py         #   on-disk coverage per product
 │   ├── serialize.py           #   JSON-safe conversion (inf/NaN/date/numpy)
 │   ├── marketcache.py         #   load_market + an LRU over it
 │   ├── barscache.py           #   LRU over DataManager.load_dataframe (chart + indicator reads)
 │   ├── static/                #   built frontend (gitignored; `npm run build` writes here)
-│   └── routers/               #   products, data, strategies, indicators, backtest, alerts, runs, jobs
+│   └── routers/               #   auth, products, data, strategies, indicators, backtest, alerts, runs, jobs
 ├── webui/                     # Web panel frontend (Vite + React + TypeScript)
 │   └── src/                   #   api client, ECharts option builders, workspace shell, panels, i18n (en/zh)
 ├── tests/                     # pytest suite (synthetic MarketData fixtures)

@@ -142,3 +142,27 @@ class AlertPreviewRequest(BaseModel):
         if self.start > self.end:
             raise ValueError(f'start {self.start} is after end {self.end}')
         return self
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordUpdateRequest(BaseModel):
+    """Set, change, or clear the optional web-access password.
+
+    ``password`` omitted or empty means "clear". A first-time set leaves
+    ``current`` out; once a password exists, ``current`` has to match it.
+    Length is checked in ``web.auth.set_password`` so an empty value can
+    still mean clear rather than fail a min-length validator.
+    """
+
+    current: Optional[str] = Field(default=None, max_length=256)
+    password: Optional[str] = Field(default=None, max_length=256)
+
+    @field_validator('current', 'password')
+    @classmethod
+    def _empty_as_none(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == '':
+            return None
+        return value

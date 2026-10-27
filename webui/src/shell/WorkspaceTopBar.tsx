@@ -18,9 +18,11 @@ const SLOT_LABEL_KEY = {
 export function WorkspaceTopBar({
   productName,
   onShowShortcuts,
+  onShowAccess,
 }: {
   productName?: string
   onShowShortcuts: () => void
+  onShowAccess: () => void
 }) {
   const { t, i18n } = useTranslation()
   const { chartSymbol } = useWorkspace()
@@ -69,6 +71,15 @@ export function WorkspaceTopBar({
             </span>
           </div>
         ))}
+
+        <button
+          className="btn btn-sm btn-ghost btn-icon"
+          onClick={onShowAccess}
+          title={t('auth.access')}
+          aria-label={t('auth.access')}
+        >
+          <Icon name="lock" />
+        </button>
 
         <button
           className="btn btn-sm btn-ghost btn-icon"

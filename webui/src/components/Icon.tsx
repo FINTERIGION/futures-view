@@ -34,6 +34,8 @@ export type IconName =
   | 'layers'
   | 'inbox'
   | 'line-chart'
+  | 'lock'
+  | 'unlock'
 
 /** Path data only -- every icon shares the viewBox, stroke and cap settings
  * set on the <svg> below, which is what keeps the set looking like a set. */
@@ -58,6 +60,8 @@ const PATHS: Record<IconName, string> = {
   layers: 'M8 2.4 14 5.6 8 8.8 2 5.6zM2 10.4 8 13.6 14 10.4',
   inbox: 'M2.2 9.2h3.4l1 2h2.8l1-2h3.4M3.9 3.4h8.2l1.6 5.8v3.4H2.3V9.2z',
   'line-chart': 'M2.2 12.4 6.2 7.8 9 10.2 13.8 4',
+  lock: 'M5.2 7.2V5.4a2.8 2.8 0 0 1 5.6 0v1.8M3.6 7.2h8.8v6.4H3.6z',
+  unlock: 'M5.2 7.2V5.4a2.8 2.8 0 0 1 5.2-1.4M3.6 7.2h8.8v6.4H3.6z',
 }
 
 export function Icon({

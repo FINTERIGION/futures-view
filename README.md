@@ -45,6 +45,8 @@ Start the panel, then open [http://127.0.0.1:8888](http://127.0.0.1:8888).
 python main.py web
 ```
 
+To reach the panel from another machine or the public internet, set an access password first (the lock icon in the top bar), then bind past localhost, e.g. `python main.py web --host 0.0.0.0`. The password is optional and stored locally; `python main.py web --clear-password` forgets it if you lose it.
+
 ## Command Line
 
 The same data downloads and backtests also run without a browser. Backtest outputs (charts, trade log) land in `results/`.

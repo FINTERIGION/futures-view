@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 """
 
 # Serialises every use of the shared connection, reads included. Python's
@@ -296,3 +306,76 @@ def delete_run(run_id: str) -> bool:
         conn.execute('DELETE FROM runs WHERE id=?', (run_id,))
         conn.commit()
     return True
+
+
+# ---------------------------------------------------------------------
+# Panel settings and login sessions
+# ---------------------------------------------------------------------
+# The same file as the run index, not a second database: the panel is one
+# process and one install, and the web-access password has to survive a
+# restart the same way history does. ``web.auth`` owns the hashing and the
+# cookie; these helpers are the rows.
+
+def get_setting(key: str) -> Optional[str]:
+    with _lock:
+        row = _get_conn().execute(
+            'SELECT value FROM settings WHERE key=?', (key,),
+        ).fetchone()
+    return None if row is None else row['value']
+
+
+def set_setting(key: str, value: Optional[str]) -> None:
+    """Write ``value``, or delete the key when ``value`` is ``None``."""
+    with _lock:
+        conn = _get_conn()
+        if value is None:
+            conn.execute('DELETE FROM settings WHERE key=?', (key,))
+        else:
+            conn.execute(
+                'INSERT INTO settings (key, value) VALUES (?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                (key, value),
+            )
+        conn.commit()
+
+
+def put_session(token_hash: str, created_at: float, expires_at: float) -> None:
+    """Record a login session and drop any that have already expired.
+
+    The prune rides along on the write that makes a new row, which is the
+    only moment the table can grow. Expired rows are otherwise harmless --
+    ``session_expires_at`` treats them as missing -- but they would sit
+    forever after a password that is set once and then used for years.
+    """
+    with _lock:
+        conn = _get_conn()
+        conn.execute('DELETE FROM sessions WHERE expires_at < ?', (created_at,))
+        conn.execute(
+            'INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)',
+            (token_hash, created_at, expires_at),
+        )
+        conn.commit()
+
+
+def session_expires_at(token_hash: str) -> Optional[float]:
+    with _lock:
+        row = _get_conn().execute(
+            'SELECT expires_at FROM sessions WHERE token_hash=?', (token_hash,),
+        ).fetchone()
+    if row is None:
+        return None
+    return float(row['expires_at'])
+
+
+def delete_session(token_hash: str) -> None:
+    with _lock:
+        conn = _get_conn()
+        conn.execute('DELETE FROM sessions WHERE token_hash=?', (token_hash,))
+        conn.commit()
+
+
+def delete_all_sessions() -> None:
+    with _lock:
+        conn = _get_conn()
+        conn.execute('DELETE FROM sessions')
+        conn.commit()

@@ -1,0 +1,84 @@
+/* Login gate and the access-password drawer. Tokens only -- see index.css. */
+
+.auth-screen {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.auth-screen-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 48px;
+  padding: 0 var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.auth-screen-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6) var(--sp-4);
+}
+
+.auth-card {
+  width: min(400px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: var(--sp-5);
+}
+
+.auth-card .brand {
+  margin-bottom: var(--sp-4);
+}
+
+.auth-card h1 {
+  font-size: var(--fs-lg);
+  margin-bottom: var(--sp-2);
+}
+
+.auth-card-hint {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.auth-card .field:last-of-type {
+  margin-bottom: var(--sp-4);
+}
+
+.auth-section + .auth-section {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+
+.auth-section h4 {
+  font-size: var(--fs-md);
+  margin-bottom: var(--sp-2);
+}
+
+.auth-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.auth-status-row strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.auth-section .toolbar {
+  margin-top: var(--sp-3);
+}

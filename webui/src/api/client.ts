@@ -13,6 +13,15 @@ export class ApiError extends Error {
   }
 }
 
+/** Called when any request other than login comes back 401. The auth gate
+ * registers this so an expired session swaps the workspace for the login
+ * screen instead of leaving every panel on a failed query. */
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -26,6 +35,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // no JSON body
     }
+    // Login's own 401 is "wrong password", not a lost session -- firing the
+    // handler there would remount the form mid-submit.
+    if (resp.status === 401 && path !== '/auth/login') onUnauthorized?.()
     throw new ApiError(resp.status, detail)
   }
   if (resp.status === 204) return undefined as T

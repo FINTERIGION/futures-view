@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 
+from web.auth import COOKIE_NAME, is_authenticated, is_public_path, password_is_set
 from web.config import (
     DEV_ORIGINS, STATIC_DIR, UNSAFE_METHODS, allowed_hosts, allowed_origins, host_allowed,
     is_within, write_origin_allowed,
 )
-from web.routers import alerts, backtest, data, indicators, jobs, products, runs, strategies
+from web.routers import alerts, auth, backtest, data, indicators, jobs, products, runs, strategies
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(message)s')
 
@@ -83,15 +85,63 @@ class WriteOriginMiddleware:
         await PlainTextResponse('Cross-origin write refused', status_code=403)(scope, receive, send)
 
 
-# Host header allowlist. This API has no authentication, and binding to
-# loopback keeps other machines out but not other *pages*: a site the user has
-# open can resolve a hostname it owns to 127.0.0.1 and reach this process from
-# inside the browser. That request carries the attacker's hostname in its Host
-# header, so requiring the header to name the panel closes that route. It is
-# not the only route -- see the Origin check below.
-# See `web.config.allowed_hosts` for how to widen this deliberately.
+class AuthMiddleware:
+    """Refuse an API request that has no session when a password is set.
+
+    The password is optional. Unset, this is a no-op and the panel behaves
+    as it always has. Set, every non-public path needs the ``fv_session``
+    cookie ``web.auth`` issued -- the SPA itself stays public so the login
+    form can load. ``web.auth.is_public_path`` owns the allowlist.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            await self.app(scope, receive, send)
+            return
+        if not password_is_set() or is_public_path(scope.get('path', '')):
+            await self.app(scope, receive, send)
+            return
+        token = _cookie_value(Headers(scope=scope).get('cookie', ''), COOKIE_NAME)
+        if is_authenticated(token):
+            await self.app(scope, receive, send)
+            return
+        await JSONResponse({'detail': 'Authentication required'}, status_code=401)(
+            scope, receive, send,
+        )
+
+
+def _cookie_value(header: str, name: str) -> Optional[str]:
+    """The first cookie named ``name`` in a raw ``Cookie`` header.
+
+    Starlette's ``Request.cookies`` is not available at the ASGI layer this
+    middleware runs at, and the header is a simple ``a=b; c=d`` list. A
+    missing or empty value is ``None``, which ``is_authenticated`` rejects.
+    """
+    if not header:
+        return None
+    prefix = name + '='
+    for part in header.split(';'):
+        piece = part.strip()
+        if piece.startswith(prefix):
+            value = piece[len(prefix):]
+            return value or None
+    return None
+
+
+# Host header allowlist. Binding to loopback keeps other machines out but not
+# other *pages*: a site the user has open can resolve a hostname it owns to
+# 127.0.0.1 and reach this process from inside the browser. That request
+# carries the attacker's hostname in its Host header, so requiring the header
+# to name the panel closes that route. It is not the only route -- see the
+# Origin check below. An optional access password (``web.auth``) is what
+# stops another machine once the panel is bound past loopback.
+# See `web.config.allowed_hosts` for how to widen the Host list deliberately.
 _ALLOWED_HOSTS = allowed_hosts()
 app.add_middleware(HostHeaderMiddleware, allowed=_ALLOWED_HOSTS)
+app.add_middleware(AuthMiddleware)
 if '*' in _ALLOWED_HOSTS:
     logging.getLogger('futuresview.web').warning(
         'Host header check is OFF (%s contains "*"): this panel will answer to any '
@@ -122,7 +172,7 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
-for router in (products, data, strategies, indicators, backtest, alerts, runs, jobs):
+for router in (auth, products, data, strategies, indicators, backtest, alerts, runs, jobs):
     app.include_router(router.router)
 
 

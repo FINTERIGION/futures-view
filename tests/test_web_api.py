@@ -1148,12 +1148,13 @@ def test_market_cache_hands_back_the_symbol_order_that_was_asked_for(monkeypatch
 # ---------------------------------------------------------------------
 
 def test_a_foreign_host_header_is_refused():
-    """The panel has no authentication and binds to loopback, which stops
-    another *machine* but not another *page*: a site the user has open can
-    resolve a name it controls to 127.0.0.1 and drive this API from inside
-    their browser, where DELETE /api/products/{code}?purge_data=true deletes
-    real files. Same-origin policy does not prevent the request, only the
-    reading of its response, so the write lands either way.
+    """The panel binds to loopback, which stops another *machine* but not
+    another *page*: a site the user has open can resolve a name it controls
+    to 127.0.0.1 and drive this API from inside their browser, where
+    DELETE /api/products/{code}?purge_data=true deletes real files. An
+    optional access password does not close this -- the browser would send
+    the cookie too. Same-origin policy does not prevent the request, only
+    the reading of its response, so the write lands either way.
 
     The Host header is the part such a request cannot forge -- it carries the
     attacker's own hostname -- so refusing anything the panel is not served

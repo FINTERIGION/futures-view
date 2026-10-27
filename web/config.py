@@ -19,9 +19,11 @@ DEFAULT_PORT = 8888
 # Binding to 127.0.0.1 keeps other machines out, but it does not keep a *web
 # page* out: a site the user is browsing can point a hostname it controls at
 # 127.0.0.1 (DNS rebinding) and drive this API from their own browser, which
-# is an unauthenticated surface that rewrites the product registry and deletes
-# data files. The browser sends the attacker's hostname in the Host header, so
-# refusing anything but the names the panel is actually served under closes it.
+# can rewrite the product registry and delete data files. The browser sends
+# the attacker's hostname in the Host header, so refusing anything but the
+# names the panel is actually served under closes it. An optional access
+# password (``web.auth``) is a separate layer: it stops another machine
+# once the panel is bound past loopback, and does not replace this check.
 #
 # `main.py web` derives FT_WEB_ALLOWED_HOSTS from the bind address when asked to
 # bind somewhere other than loopback, because the Host header is then whatever
