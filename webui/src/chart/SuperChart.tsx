@@ -22,7 +22,7 @@ import { activeOverrides } from './indicatorParams'
  * equity curve and trade log render in the backtest panel instead (see
  * panels/ResultTables.tsx).
  */
-export function SuperChart({ productName }: { productName?: string }) {
+export function SuperChart() {
   const { t } = useTranslation()
   const dark = useIsDarkMode()
   const { chartSymbol, setChartSymbol, showVolume, indicators, indicatorParams, setIndicatorParams, runId, setRunId } =
@@ -155,7 +155,7 @@ export function SuperChart({ productName }: { productName?: string }) {
     const isMissing = barsError instanceof ApiError && barsError.status === 404
     return (
       <div className="chart-area">
-        <ChartToolbar productName={productName} />
+        <ChartToolbar />
         <div className="empty-state">
           <span className="empty-state-icon">
             <Icon name={isMissing ? 'download' : 'alert'} size={18} />
@@ -172,7 +172,7 @@ export function SuperChart({ productName }: { productName?: string }) {
   if (barsLoading || !barsData) {
     return (
       <div className="chart-area">
-        <ChartToolbar productName={productName} />
+        <ChartToolbar />
         <div className="empty-state">
           <span className="spinner" />
           {t('common.loading')}
@@ -195,7 +195,7 @@ export function SuperChart({ productName }: { productName?: string }) {
 
   return (
     <div className="chart-area">
-      <ChartToolbar productName={productName} />
+      <ChartToolbar />
       {/* Every banner over the chart shares one gutter (.chart-notices) rather
           than carrying its own inline margin -- with four of them able to
           stack, the spacing had to be a property of the stack. */}

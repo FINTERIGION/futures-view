@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import type { StrategyInfo } from '../api/types'
 import type { ParamFieldErrors } from '../chart/indicatorParams'
+import { Icon } from '../components/Icon'
 import { StrategyParamFields } from './StrategyParamFields'
 
 /** Windows worth one click. A backtest is nearly always run over "the last
@@ -38,6 +39,8 @@ export function BacktestForm({
   onResetParams,
   paramErrors,
   universe,
+  onToggleUniverse,
+  onManageUniverse,
   start,
   onStartChange,
   end,
@@ -61,6 +64,8 @@ export function BacktestForm({
   onResetParams: () => void
   paramErrors: ParamFieldErrors
   universe: string[]
+  onToggleUniverse: (symbol: string) => void
+  onManageUniverse: () => void
   start: string
   onStartChange: (v: string) => void
   end: string
@@ -79,134 +84,153 @@ export function BacktestForm({
   const broken = strategies.filter((s) => s.errors.length > 0)
   const strategy = strategies.find((s) => s.key === strategyKey)
   return (
-    <>
-      <div className="field">
-        <label>{t('common.strategy')}</label>
-        <div className="field-row">
-          <select value={strategyKey} onChange={(e) => onStrategyChange(e.target.value)}>
-            {strategies.map((s) => (
-              <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
-                {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="btn"
-            disabled={!canReloadStrategies || reloadingStrategies}
-            onClick={onReloadStrategies}
-            title={t('backtest.reloadStrategiesHint')}
-          >
-            {reloadingStrategies ? t('common.loading') : t('backtest.reloadStrategies')}
+    <div className="backtest-form">
+      <section className="form-section">
+        <h3 className="form-section-title">{t('backtest.strategyAndParams')}</h3>
+        <div className="field">
+          <label>{t('common.strategy')}</label>
+          <div className="field-row">
+            <select value={strategyKey} onChange={(e) => onStrategyChange(e.target.value)}>
+              {strategies.map((s) => (
+                <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
+                  {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-icon"
+              disabled={!canReloadStrategies || reloadingStrategies}
+              onClick={onReloadStrategies}
+              title={t('backtest.reloadStrategiesHint')}
+              aria-label={t('backtest.reloadStrategies')}
+            >
+              {reloadingStrategies ? <span className="spinner" /> : <Icon name="refresh" size={14} />}
+            </button>
+          </div>
+          {broken.length > 0 && (
+            <div className="field-error">
+              {t('backtest.strategyBrokenHint')}
+              {broken.map((s) => (
+                <div key={s.key}>
+                  <code>{s.module}</code>: {s.errors.join('; ')}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {strategy && (
+          <StrategyParamFields
+            strategy={strategy}
+            paramDraft={paramDraft}
+            onParamDraftChange={onParamDraftChange}
+            onResetParams={onResetParams}
+            paramErrors={paramErrors}
+          />
+        )}
+      </section>
+
+      <section className="form-section">
+        <div className="field-label-row">
+          <h3 className="form-section-title">{`${t('common.symbols')} (${universe.length})`}</h3>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={onManageUniverse}>
+            {t('workspace.manageProducts')}
           </button>
         </div>
-        {broken.length > 0 && (
-          <div className="field-error">
-            {t('backtest.strategyBrokenHint')}
-            {broken.map((s) => (
-              <div key={s.key}>
-                <code>{s.module}</code>: {s.errors.join('; ')}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {strategy && (
-        <StrategyParamFields
-          strategy={strategy}
-          paramDraft={paramDraft}
-          onParamDraftChange={onParamDraftChange}
-          onResetParams={onResetParams}
-          paramErrors={paramErrors}
-        />
-      )}
-
-      <div className="field">
-        <label>
-          {t('common.symbols')} ({universe.length})
-        </label>
-        <div className="toolbar">
+        <div className="universe-chip-list">
           {universe.length === 0 ? (
             <span className="badge badge-neutral">{t('workspace.noProducts')}</span>
           ) : (
-            universe.map((sym, i) => (
-              // The first chip is the charted product, which is in this
-              // universe structurally -- the accent says which one the main
-              // chart is showing, not which one matters more to the run.
-              <span key={sym} className={`badge ${i === 0 ? 'badge-accent' : 'badge-neutral'}`}>
+            universe.map((sym) => (
+              <button
+                key={sym}
+                type="button"
+                className="universe-chip"
+                title={t('workspace.removeFromUniverse', { symbol: sym })}
+                aria-label={t('workspace.removeFromUniverse', { symbol: sym })}
+                onClick={() => onToggleUniverse(sym)}
+              >
                 {sym}
-              </span>
+                <Icon name="close" size={11} />
+              </button>
             ))
           )}
         </div>
         <p className="field-hint">{t('workspace.universeFromSidebar')}</p>
-      </div>
+      </section>
 
-      <div className="field">
-        <label>{t('backtest.range')}</label>
-        <div className="toolbar">
-          {RANGE_PRESETS.map((years) => {
-            const range = isoYearRange(years)
-            const active = start === range.start && end === range.end
-            return (
-              <button
-                key={years}
-                type="button"
-                className={`btn btn-sm ${active ? 'btn-primary' : ''}`}
-                title={t('backtest.lastYears', { n: years })}
-                onClick={() => {
-                  onStartChange(range.start)
-                  onEndChange(range.end)
-                }}
-              >
-                {years}Y
-              </button>
-            )
-          })}
+      <section className="form-section">
+        <h3 className="form-section-title">{t('backtest.range')}</h3>
+        <div className="field">
+          <div className="toolbar">
+            {RANGE_PRESETS.map((years) => {
+              const range = isoYearRange(years)
+              const active = start === range.start && end === range.end
+              return (
+                <button
+                  key={years}
+                  type="button"
+                  className={`btn btn-sm ${active ? 'btn-primary' : ''}`}
+                  title={t('backtest.lastYears', { n: years })}
+                  onClick={() => {
+                    onStartChange(range.start)
+                    onEndChange(range.end)
+                  }}
+                >
+                  {years}Y
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+        <div className="form-grid">
+          <div className="field">
+            <label>{t('common.start')}</label>
+            <input
+              type="date"
+              value={start}
+              className={windowValid ? undefined : 'invalid'}
+              onChange={(e) => onStartChange(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label>{t('common.end')}</label>
+            <input
+              type="date"
+              value={end}
+              className={windowValid ? undefined : 'invalid'}
+              onChange={(e) => onEndChange(e.target.value)}
+            />
+          </div>
+        </div>
+      </section>
 
-      <div className="form-grid">
-        <div className="field">
-          <label>{t('common.start')}</label>
-          <input
-            type="date"
-            value={start}
-            className={windowValid ? undefined : 'invalid'}
-            onChange={(e) => onStartChange(e.target.value)}
-          />
+      <section className="form-section">
+        <h3 className="form-section-title">{t('backtest.cashAndCosts')}</h3>
+        <div className="form-grid">
+          <div className="field">
+            <label>{t('common.cash')}</label>
+            <input
+              type="number"
+              className={cashValid ? undefined : 'invalid'}
+              value={cash}
+              onChange={(e) => onCashChange(Number(e.target.value))}
+            />
+          </div>
+          <div className="field">
+            <label>{t('common.slippage')}</label>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              className={slippageValid ? undefined : 'invalid'}
+              value={slippage}
+              onChange={(e) => onSlippageChange(Number(e.target.value))}
+            />
+          </div>
         </div>
-        <div className="field">
-          <label>{t('common.end')}</label>
-          <input
-            type="date"
-            value={end}
-            className={windowValid ? undefined : 'invalid'}
-            onChange={(e) => onEndChange(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>{t('common.cash')}</label>
-          <input
-            type="number"
-            className={cashValid ? undefined : 'invalid'}
-            value={cash}
-            onChange={(e) => onCashChange(Number(e.target.value))}
-          />
-        </div>
-        <div className="field">
-          <label>{t('common.slippage')}</label>
-          <input
-            type="number"
-            step="any"
-            min="0"
-            className={slippageValid ? undefined : 'invalid'}
-            value={slippage}
-            onChange={(e) => onSlippageChange(Number(e.target.value))}
-          />
-        </div>
-      </div>
-    </>
+      </section>
+    </div>
   )
 }

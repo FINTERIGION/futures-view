@@ -110,6 +110,20 @@ body.drawer-resizing .workspace {
   white-space: nowrap;
 }
 
+.topbar-jobs,
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.topbar-actions {
+  flex: 0 0 auto;
+  padding-left: var(--sp-1);
+  border-left: 1px solid var(--border);
+}
+
 /* A job running somewhere off screen. The bar under the label carries the
    progress, so the pill does not have to re-flow as the percentage climbs
    through its digits. */
@@ -122,6 +136,16 @@ body.drawer-resizing .workspace {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+
+.job-pill:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 .job-pill-head {
@@ -442,6 +466,10 @@ body.drawer-resizing .workspace {
   border-left: 1px solid var(--border);
 }
 
+.sidebar-backdrop {
+  display: none;
+}
+
 .sidebar-rail {
   grid-column: 2;
   grid-row: 1 / 3;
@@ -563,6 +591,14 @@ body.drawer-resizing .workspace {
   padding: var(--sp-1) 0;
 }
 
+.sidebar-action,
+.sidebar-clear {
+  min-height: 20px;
+  margin: -3px 0;
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-xs);
+}
+
 .sidebar-footer {
   flex: 0 0 auto;
   border-top: 1px solid var(--border);
@@ -592,9 +628,34 @@ body.drawer-resizing .workspace {
   background: var(--surface-2);
 }
 
-/* Membership of the backtest universe. A click anywhere on the row toggles
-   it, but the box is what says so -- the border alone left people guessing
-   what the row's two selections were. */
+/* Universe membership is an independent native checkbox; the row itself
+   charts the product. */
+.universe-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.universe-toggle input {
+  position: absolute;
+  inset: 0;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  opacity: 0;
+}
+
+.universe-toggle input:focus-visible + .universe-box {
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.universe-toggle input:disabled {
+  cursor: not-allowed;
+}
+
 .product-row .universe-box {
   flex: 0 0 auto;
   display: flex;
@@ -610,8 +671,7 @@ body.drawer-resizing .workspace {
     color var(--dur-1) var(--ease);
 }
 
-.product-row.is-in-universe .universe-box,
-.product-row.is-charted .universe-box {
+.product-row.is-in-universe .universe-box {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
@@ -622,12 +682,6 @@ body.drawer-resizing .workspace {
    be mistaken for either. */
 .product-row.is-active {
   box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-/* The charted row is in the universe structurally, not by choice, so its box
-   reads as fixed rather than ticked. */
-.product-row.is-charted .universe-box {
-  opacity: 0.55;
 }
 
 .product-row.is-charted {
@@ -720,10 +774,13 @@ body.drawer-resizing .workspace {
   border-bottom: none;
 }
 
-.bdrawer-collapsed-label {
-  font-size: var(--fs-md);
-  font-weight: 500;
-  color: var(--text-muted);
+.bdrawer-collapsed .tabs {
+  align-self: stretch;
+}
+
+.bdrawer-collapsed .tab {
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
 }
 
 /* The drag handle straddles the drawer's top edge. Invisible until pointed
@@ -817,6 +874,104 @@ body.drawer-resizing .bdrawer-handle::after {
   min-height: 0;
 }
 
+.backtest-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.form-section + .form-section {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.form-section-title {
+  margin: 0 0 var(--sp-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.field-label-row .btn {
+  margin-top: calc(-1 * var(--sp-1));
+}
+
+.universe-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+
+.universe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 24px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+button.universe-chip:hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.universe-chip.is-locked {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: default;
+}
+
+.backtest-run-dock {
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.backtest-run-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--sp-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.backtest-run-summary .num {
+  color: var(--text-faint);
+}
+
+.run-block-reason {
+  margin: var(--sp-2) 0 0;
+  color: var(--warning);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.job-progress-block,
+.result-equity,
+.result-details {
+  margin-top: var(--sp-4);
+}
+
 /* ============================================================================
    Keyboard shortcut sheet
    ============================================================================ */
@@ -857,6 +1012,18 @@ body.drawer-resizing .bdrawer-handle::after {
   /* The sidebar overlays the chart instead of squeezing it -- at this width
    * a permanent 300px column would leave the chart with nothing to draw
    * in. */
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 48px 0 0;
+    display: block;
+    padding: 0;
+    border: none;
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    backdrop-filter: blur(2px);
+    z-index: var(--z-backdrop);
+    cursor: default;
+  }
+
   .sidebar {
     position: fixed;
     top: 48px;
@@ -865,7 +1032,7 @@ body.drawer-resizing .bdrawer-handle::after {
     width: min(320px, 86vw);
     grid-column: unset;
     grid-row: unset;
-    z-index: var(--z-pop);
+    z-index: var(--z-modal);
     box-shadow: var(--shadow-lg);
   }
 
@@ -879,6 +1046,11 @@ body.drawer-resizing .bdrawer-handle::after {
     z-index: var(--z-pop);
   }
 
+  .product-row .row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .chart-area,
   .bdrawer {
     grid-column: 1;
@@ -890,5 +1062,49 @@ body.drawer-resizing .bdrawer-handle::after {
 
   .topbar-symbol {
     max-width: 150px;
+  }
+
+  .topbar-symbol-name {
+    display: none;
+  }
+
+  .topbar-jobs {
+    overflow-x: auto;
+  }
+
+  .job-pill {
+    min-width: 96px;
+  }
+
+  .alerts-toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar-inner {
+    gap: var(--sp-1);
+    padding: 0 var(--sp-2);
+  }
+
+  .brand-name,
+  .topbar-divider {
+    display: none;
+  }
+
+  .topbar-actions {
+    gap: var(--sp-1);
+  }
+
+  .bdrawer-body {
+    padding: var(--sp-2);
+  }
+
+  .panel-rail {
+    padding: var(--sp-2);
+  }
+
+  .alerts-toolbar .spacer {
+    display: none;
   }
 }

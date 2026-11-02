@@ -36,6 +36,8 @@ export type IconName =
   | 'line-chart'
   | 'lock'
   | 'unlock'
+  | 'refresh'
+  | 'copy'
 
 /** Path data only -- every icon shares the viewBox, stroke and cap settings
  * set on the <svg> below, which is what keeps the set looking like a set. */
@@ -62,6 +64,8 @@ const PATHS: Record<IconName, string> = {
   'line-chart': 'M2.2 12.4 6.2 7.8 9 10.2 13.8 4',
   lock: 'M5.2 7.2V5.4a2.8 2.8 0 0 1 5.6 0v1.8M3.6 7.2h8.8v6.4H3.6z',
   unlock: 'M5.2 7.2V5.4a2.8 2.8 0 0 1 5.2-1.4M3.6 7.2h8.8v6.4H3.6z',
+  refresh: 'M13.2 5.2a5.6 5.6 0 1 0 .4 5.2M13.2 2.4v3.2H10',
+  copy: 'M5.6 5.6V2.4h8v8h-3.2M2.4 5.6h8v8h-8z',
 }
 
 export function Icon({

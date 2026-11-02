@@ -76,16 +76,20 @@ export function ResultTables({ run }: { run: RunDetail }) {
           <strong>{t('backtest.blownUp')}</strong> — {t('backtest.blownUpHint')}
         </div>
       )}
+      {run.metrics && (
+        <div className="result-metrics">
+          <MetricStats metrics={run.metrics} highlightPrimary />
+        </div>
+      )}
       {run.equity_records.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
+        <div className="result-equity">
           <Card title={t('backtest.equityCurve')}>
             <EChart option={equityOption} height={220} />
           </Card>
         </div>
       )}
-      {run.metrics && <MetricStats metrics={run.metrics} />}
 
-      <div style={{ marginTop: 16 }}>
+      <div className="result-details">
         <div className="tabs-bar">
           <Tabs items={tabs} active={tab} onChange={setTab} />
         </div>

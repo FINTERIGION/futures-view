@@ -87,7 +87,7 @@ export function RunHistory({
           <span className="badge badge-danger">{t('backtest.blownUp')}</span>
         ) : (
           <span className={`badge ${r.status === 'done' ? 'badge-success' : r.status === 'error' ? 'badge-danger' : 'badge-neutral'}`}>
-            {r.status}
+            {t(`jobs.${r.status}`)}
           </span>
         ),
     },

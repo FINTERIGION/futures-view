@@ -32,15 +32,16 @@ function fieldInput(label: string) {
   return within(field as HTMLElement).getByRole('spinbutton')
 }
 
-function renderDrawer() {
+function renderDrawer(onClose = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <JobsProvider>
-        <ProductDrawer code="SA" onClose={() => {}} />
+        <ProductDrawer code="SA" onClose={onClose} />
       </JobsProvider>
     </QueryClientProvider>,
   )
+  return { ...result, client, onClose }
 }
 
 beforeEach(() => {
@@ -80,5 +81,33 @@ describe('rate display', () => {
     const [, body] = vi.mocked(productsApi.update).mock.calls[0]
     expect(body.margin_rate).toBeCloseTo(0.125, 10)
     expect(body.commission_rate).toBeCloseTo(0.000123, 10)
+  })
+
+  it('invalidates product queries and closes when saved', async () => {
+    const user = userEvent.setup()
+    vi.mocked(productsApi.get).mockResolvedValue(product(0.125, 0.0001) as never)
+    const { client, onClose } = renderDrawer()
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+
+    await user.click(await screen.findByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['products'] })))
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('deletes product, removes cached queries and closes', async () => {
+    const user = userEvent.setup()
+    vi.mocked(productsApi.get).mockResolvedValue(product(0.125, 0.0001) as never)
+    vi.mocked(productsApi.remove).mockResolvedValue(undefined as never)
+    const { client, onClose } = renderDrawer()
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries')
+    const removeSpy = vi.spyOn(client, 'removeQueries')
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(productsApi.remove).toHaveBeenCalledWith('SA', false))
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['products'] }))
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['product', 'SA'] }))
+    expect(onClose).toHaveBeenCalled()
   })
 })

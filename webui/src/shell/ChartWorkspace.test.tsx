@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { alertsApi, backtestApi, dataApi, indicatorsApi, jobsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
@@ -57,7 +57,7 @@ describe('opening a past run from the workspace history tab', () => {
     // Opening a row also prefills the Backtest tab and switches to it, so
     // reaching the next row means going back to History first -- the same
     // thing a user comparing two runs would do.
-    await user.click(screen.getByRole('button', { name: 'Backtest History' }))
+    await user.click(screen.getByRole('tab', { name: 'Backtest History' }))
     const [, , freshRowB] = await screen.findAllByRole('row')
     await user.click(freshRowB)
 
@@ -126,7 +126,7 @@ async function findProductRow(list: HTMLElement, code: string) {
 }
 
 describe('the product sidebar', () => {
-  it('single-clicking a product toggles it into and out of the backtest universe used by the Backtest tab', async () => {
+  it('single-clicking charts a product without changing the universe selection', async () => {
     const user = userEvent.setup()
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
 
@@ -136,78 +136,223 @@ describe('the product sidebar', () => {
 
     await user.click(cfRow)
     expect(cfRow).toHaveAttribute('aria-selected', 'true')
-
-    // The Backtest tab's universe chips (in .panel-rail) pick up the newly
-    // toggled product alongside the sidebar's own row for it.
+    expect(within(cfRow).getByRole('checkbox')).not.toBeChecked()
     const rail = document.querySelector('.panel-rail')!
-    await waitFor(() => expect(within(rail as HTMLElement).getByText('CF')).toBeInTheDocument())
+    expect(within(rail as HTMLElement).queryByText('CF')).not.toBeInTheDocument()
 
-    await user.click(cfRow)
+    const saRow = await findProductRow(list, 'SA')
+    await user.click(saRow)
+    expect(saRow).toHaveAttribute('aria-selected', 'true')
     expect(cfRow).toHaveAttribute('aria-selected', 'false')
+    expect(within(cfRow).getByRole('checkbox')).not.toBeChecked()
   })
 
-  it('single-clicking a product is what the next saved alert will snapshot as its universe', async () => {
+  it('uses the checkbox independently for universe membership without locking the charted product', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    const list = await screen.findByRole('listbox')
+    const cfRow = await findProductRow(list, 'CF')
+    const checkbox = within(cfRow).getByRole('checkbox')
+    const rail = document.querySelector('.panel-rail')!
+
+    await user.click(checkbox)
+    expect(checkbox).toBeChecked()
+    expect(cfRow).toHaveAttribute('aria-selected', 'false')
+    await waitFor(() => expect(within(rail as HTMLElement).getByText('CF')).toBeInTheDocument())
+
+    await user.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+    expect(within(rail as HTMLElement).queryByText('CF')).not.toBeInTheDocument()
+
+    const saRow = await findProductRow(list, 'SA')
+    const saCheckbox = within(saRow).getByRole('checkbox')
+    expect(saCheckbox).toBeChecked()
+    expect(saCheckbox).toBeEnabled()
+
+    await user.click(saCheckbox)
+    expect(saCheckbox).not.toBeChecked()
+    expect(within(rail as HTMLElement).queryByText('SA')).not.toBeInTheDocument()
+  })
+
+  it('selects and clears all products in the universe from the sidebar action buttons', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    const list = await screen.findByRole('listbox')
+    const selectAllBtn = screen.getByRole('button', { name: 'Select all' })
+    const clearBtn = screen.getByRole('button', { name: 'Clear' })
+
+    await user.click(selectAllBtn)
+    const checkboxes = within(list).getAllByRole('checkbox')
+    checkboxes.forEach((cb) => expect(cb).toBeChecked())
+    expect(selectAllBtn).toBeDisabled()
+
+    await user.click(clearBtn)
+    checkboxes.forEach((cb) => expect(cb).not.toBeChecked())
+    expect(clearBtn).toBeDisabled()
+  })
+
+  it('selects only filtered products when a search query is active and disables on empty match', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    const searchInput = screen.getByPlaceholderText(/search/i)
+    const selectAllBtn = screen.getByRole('button', { name: 'Select all' })
+    const clearBtn = screen.getByRole('button', { name: 'Clear' })
+
+    // First clear any selections
+    await user.click(clearBtn)
+    expect(clearBtn).toBeDisabled()
+
+    // Type "CF" into search
+    await user.type(searchInput, 'CF')
+    expect(selectAllBtn).toBeEnabled()
+
+    // Click select all - only CF should be selected
+    await user.click(selectAllBtn)
+    expect(selectAllBtn).toBeDisabled()
+
+    // Clear search input
+    await user.clear(searchInput)
+
+    const list = await screen.findByRole('listbox')
+    const saRow = await findProductRow(list, 'SA')
+    const cfRow = await findProductRow(list, 'CF')
+    expect(within(cfRow).getByRole('checkbox')).toBeChecked()
+    expect(within(saRow).getByRole('checkbox')).not.toBeChecked()
+
+    // Typing non-matching query disables select all
+    await user.type(searchInput, 'XYZNONEXISTENT')
+    expect(selectAllBtn).toBeDisabled()
+  })
+
+  it('uses checked products as the next signal monitor universe', async () => {
     const user = userEvent.setup()
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=alerts' })
 
     const list = await screen.findByRole('listbox')
     const cfRow = await findProductRow(list, 'CF')
-    await user.click(cfRow)
-    expect(cfRow).toHaveAttribute('aria-selected', 'true')
+    await user.click(within(cfRow).getByRole('checkbox'))
+    expect(cfRow).toHaveAttribute('aria-selected', 'false')
 
-    await user.click(await screen.findByRole('button', { name: 'Add' }))
+    await user.click(await screen.findByRole('button', { name: 'New signal' }))
     const drawer = document.querySelector('.bdrawer-body')!
     await waitFor(() => expect(within(drawer as HTMLElement).getByText('CF')).toBeInTheDocument())
   })
 
-  it('lists Alert before Backtest in the drawer tab bar', async () => {
+  it('puts Backtest first in the drawer tab bar', async () => {
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
-    await screen.findByRole('button', { name: 'Alert' })
-    const labels = [...document.querySelectorAll('.bdrawer-tabbar .tab')].map((el) => el.textContent)
-    expect(labels).toEqual(['Alert', 'Backtest', 'Backtest History'])
+    await screen.findByRole('tab', { name: 'Signals' })
+    const labels = Array.from(document.querySelectorAll('.bdrawer-tabbar .tab')).map((el) => el.textContent)
+    expect(labels).toEqual(['Backtest', 'Signals', 'Backtest History'])
   })
 
-  it('does not re-preview a saved alert when a product is ticked into the sidebar', async () => {
+  it('does not calculate a saved alert when the sidebar universe changes', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
       'ft.alertEntries',
       JSON.stringify([{ id: 'e1', strategy: 'double_ma', symbols: ['SA'], params: {}, createdAt: 1 }]),
     )
     localStorage.setItem('ft.alertActiveId', JSON.stringify('e1'))
-    vi.mocked(alertsApi.preview).mockResolvedValue({ job_id: 'aj1' })
 
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=alerts' })
-    await waitFor(() =>
-      expect(alertsApi.preview).toHaveBeenCalledWith(expect.objectContaining({ symbols: ['SA'] })),
-    )
-
+    await screen.findByText('double_ma')
     const list = await screen.findByRole('listbox')
     const cfRow = await findProductRow(list, 'CF')
-    await user.click(cfRow)
+    await user.click(within(cfRow).getByRole('checkbox'))
 
-    // The row already stored its universe. Checking CF into the backtest
-    // pool must not silently rewrite this alert and fire another replay.
-    await waitFor(() => expect(cfRow).toHaveAttribute('aria-selected', 'true'))
-    expect(alertsApi.preview).toHaveBeenCalledTimes(1)
+    expect(within(cfRow).getByRole('checkbox')).toBeChecked()
+    expect(alertsApi.preview).not.toHaveBeenCalled()
   })
 
-  it('double-clicking a product switches the main chart to it; single-clicking the charted row is a no-op on the universe', async () => {
+  it('single-clicking another product switches the main chart without altering universe checkboxes', async () => {
     const user = userEvent.setup()
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
 
     const list = await screen.findByRole('listbox')
     const saRow = await findProductRow(list, 'SA')
     expect(saRow.className).toContain('is-charted')
-
-    // The charted product is structurally always in the universe, so a
-    // single click on its own row can't toggle anything.
-    await user.click(saRow)
-    expect(saRow).toHaveAttribute('aria-selected', 'true')
+    expect(within(saRow).getByRole('checkbox')).toBeEnabled()
+    expect(within(saRow).getByRole('checkbox')).toBeChecked()
 
     const cfRow = await findProductRow(list, 'CF')
-    await user.dblClick(cfRow)
+    expect(within(cfRow).getByRole('checkbox')).toBeEnabled()
+    expect(within(cfRow).getByRole('checkbox')).not.toBeChecked()
+
+    await user.click(cfRow)
     expect(cfRow.className).toContain('is-charted')
+    expect(within(cfRow).getByRole('checkbox')).not.toBeChecked()
     expect(saRow.className).not.toContain('is-charted')
+    expect(within(saRow).getByRole('checkbox')).toBeChecked()
+  })
+
+  it('closes the narrow sidebar on Escape, backdrop click and after charting a product', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 900px)',
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+      onchange: null,
+    }))
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+    await screen.findByRole('listbox')
+
+    const search = screen.getByRole('textbox', { name: 'Search products…' })
+    await user.click(search)
+    await user.keyboard('CF{Escape}')
+    expect(search).toHaveValue('')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}{Escape}')
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Products' }))
+    const list = await screen.findByRole('listbox')
+    await user.click(await findProductRow(list, 'CF'))
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Products' }))
+    await screen.findByRole('listbox')
+    fireEvent.click(document.querySelector('.sidebar-backdrop')!)
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+  })
+})
+
+describe('workspace navigation', () => {
+  it('keeps tabs available while collapsed and expands the selected one', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+    await screen.findByRole('tab', { name: 'Backtest' })
+
+    await user.click(document.querySelector('.bdrawer-toggle')!)
+    expect(document.querySelector('.bdrawer')).toHaveClass('bdrawer-collapsed')
+    expect(screen.getByRole('tab', { name: 'Signals' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Signals' }))
+    expect(document.querySelector('.bdrawer')).not.toHaveClass('bdrawer-collapsed')
+    expect(screen.getByRole('tab', { name: 'Signals' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('opens the running backtest panel from its top-bar progress pill', async () => {
+    const user = userEvent.setup()
+    vi.mocked(backtestApi.start).mockResolvedValue({ job_id: 'j-nav', run_id: 'run-a' })
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    const run = await screen.findByRole('button', { name: 'Run Backtest' })
+    await waitFor(() => expect(run).toBeEnabled())
+    await user.click(run)
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1))
+    MockEventSource.instances[0].emit({ type: 'state', status: 'running', progress: 0.25, message: 'Running' })
+    const pill = await screen.findByRole('button', { name: 'Backtest 25%' })
+
+    await user.click(screen.getByRole('tab', { name: 'Signals' }))
+    await user.click(pill)
+    expect(screen.getByRole('tab', { name: 'Backtest' })).toHaveAttribute('aria-selected', 'true')
+    expect(document.querySelector('.bdrawer')).not.toHaveClass('bdrawer-collapsed')
   })
 })
 
@@ -261,7 +406,7 @@ describe('exiting a finished backtest', () => {
 
     const list = await screen.findByRole('listbox')
     const cfRow = await findProductRow(list, 'CF')
-    await user.dblClick(cfRow)
+    await user.click(cfRow)
 
     expect(cfRow.className).toContain('is-charted')
     expect(screen.queryByRole('button', { name: 'Exit backtest' })).not.toBeInTheDocument()

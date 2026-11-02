@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorMessage } from '../api/client'
@@ -7,6 +7,7 @@ import type { Product, ProductInput } from '../api/types'
 import { candlestickOption } from '../charts/builders'
 import { EChart } from '../components/EChart'
 import { useJobs } from '../shell/JobsProvider'
+import { useOptionalWorkspace } from '../shell/WorkspaceContext'
 import { useIsDarkMode } from '../theme/useIsDarkMode'
 
 /**
@@ -168,6 +169,8 @@ export function useProductForm(code: string | null, onClose: () => void): Produc
   const isEdit = code !== null
   const dark = useIsDarkMode()
   const jobs = useJobs()
+  const queryClient = useQueryClient()
+  const workspace = useOptionalWorkspace()
   const lockedByJob = jobs.backtest.isActive || jobs.data.isActive
 
   const { data: exchangeMeta } = useQuery({ queryKey: ['meta', 'exchanges'], queryFn: productsApi.exchanges })
@@ -214,13 +217,41 @@ export function useProductForm(code: string | null, onClose: () => void): Produc
       const input = toApiInput(form)
       return isEdit ? productsApi.update(code as string, input) : productsApi.create(form.code.toUpperCase(), input)
     },
-    onSuccess: () => onClose(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['products'] })
+      if (isEdit && code) {
+        void queryClient.invalidateQueries({ queryKey: ['product', code] })
+        void queryClient.invalidateQueries({ queryKey: ['product-bars', code] })
+        void queryClient.invalidateQueries({ queryKey: ['product-roll', code] })
+        void queryClient.invalidateQueries({ queryKey: ['indicator'] })
+      } else if (!isEdit && form.code) {
+        workspace?.setChartSymbol(form.code.toUpperCase())
+      }
+      onClose()
+    },
     onError: (err) => setFormError(errorMessage(err)),
   })
 
   const deleteMutation = useMutation({
     mutationFn: () => productsApi.remove(code as string, purgeData),
-    onSuccess: () => onClose(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['products'] })
+      if (code) {
+        queryClient.removeQueries({ queryKey: ['product', code] })
+        queryClient.removeQueries({ queryKey: ['product-bars', code] })
+        queryClient.removeQueries({ queryKey: ['product-roll', code] })
+        void queryClient.invalidateQueries({ queryKey: ['indicator'] })
+        if (workspace) {
+          if (workspace.universe.includes(code)) {
+            workspace.setUniverse((prev) => prev.filter((s) => s !== code))
+          }
+          if (workspace.chartSymbol === code) {
+            workspace.setChartSymbol('')
+          }
+        }
+      }
+      onClose()
+    },
     onError: (err) => setFormError(errorMessage(err)),
   })
 

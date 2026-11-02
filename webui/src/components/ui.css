@@ -476,6 +476,11 @@ table.dtable {
   background: var(--surface-2);
 }
 
+.dtable tbody tr:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent-ring);
+}
+
 /* Figures are read down a column, not across a row -- so they align on their
    right edge and share a width per digit. */
 .dtable .col-num {
@@ -532,8 +537,97 @@ table.dtable {
 .alert-expand-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-2);
   margin-bottom: var(--sp-2);
+}
+
+.alerts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.alerts-toolbar {
+  flex-wrap: nowrap;
+}
+
+.alert-composer-actions {
+  margin-top: var(--sp-2);
+}
+
+.alert-row-actions,
+.alert-signal-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.alert-row-actions {
+  flex-wrap: nowrap;
+}
+
+.alert-strategy {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
+.alert-signal {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.alert-signal.op-close,
+.alert-signal.op-reverse,
+.alert-operation.op-close,
+.alert-operation.op-reverse {
+  color: var(--danger);
+}
+
+.alert-signal.op-close,
+.alert-signal.op-reverse {
+  border-color: color-mix(in srgb, var(--danger) 25%, transparent);
+  background: var(--danger-bg);
+}
+
+.alert-operation {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.alert-no-action,
+.alert-summary-empty {
+  color: var(--text-faint);
+}
+
+.alert-params-summary {
+  max-width: 52ch;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-batch-progress {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.alert-empty-preview {
+  padding: var(--sp-4);
 }
 
 /* A figure whose sign is the point -- a trade's net PnL. Inline colour on the
@@ -686,6 +780,15 @@ table.dtable {
 .stat-tile:hover {
   border-color: var(--border-strong);
   box-shadow: var(--shadow-sm);
+}
+
+.stat-tile-primary {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.stat-tile-primary .value {
+  font-size: var(--fs-xl);
 }
 
 .stat-tile .label {

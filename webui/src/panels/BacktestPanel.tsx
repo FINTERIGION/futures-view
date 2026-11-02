@@ -78,7 +78,7 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
   const queryClient = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
-  const { universe, runId, setRunId } = useWorkspace()
+  const { universe, toggleUniverse, setSidebarOpen, runId, setRunId } = useWorkspace()
 
   // Read once, the way BacktestPage's router-state prefill was: applying it
   // in an effect instead left one render where the form still showed the
@@ -211,6 +211,24 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     windowValid &&
     parsedParams.ok
 
+  const runBlockReason = job.isActive
+    ? t('jobs.running')
+    : !strategies
+      ? t('common.loading')
+      : !strategyKey || strategyBroken
+        ? t('backtest.noRunnableStrategy')
+        : universe.length === 0
+          ? t('workspace.noProducts')
+          : !slippageValid
+            ? t('common.slippageNegative')
+            : !cashValid
+              ? t('common.cashNotPositive')
+              : !windowValid
+                ? t('common.windowInverted')
+                : !parsedParams.ok
+                  ? t('backtest.fixParams')
+                  : null
+
   const runBacktest = async () => {
     if (!parsedParams.ok) return
     setError(null)
@@ -291,6 +309,8 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
           onResetParams={onResetParams}
           paramErrors={parsedParams.errors}
           universe={universe}
+          onToggleUniverse={toggleUniverse}
+          onManageUniverse={() => setSidebarOpen(true)}
           start={start}
           onStartChange={setStart}
           end={end}
@@ -309,19 +329,27 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
         {!cashValid && <div className="hint-banner warning">{t('common.cashNotPositive')}</div>}
         {!windowValid && <div className="hint-banner warning">{t('common.windowInverted')}</div>}
 
-        <button
-          className="btn btn-primary btn-block"
-          onClick={() => void runBacktest()}
-          disabled={!canRun}
-          style={{ marginTop: 8 }}
-          title={t('backtest.runBacktestHint')}
-        >
-          {job.isActive ? <span className="spinner" /> : <Icon name="line-chart" size={14} />}
-          {t('backtest.runBacktest')}
-        </button>
+        <div className="backtest-run-dock">
+          <div className="backtest-run-summary">
+            <span>{t('backtest.runSummary', { count: universe.length })}</span>
+            <span className="num">{start || '—'} → {end || '—'}</span>
+          </div>
+          <button
+            className="btn btn-primary btn-block"
+            onClick={() => void runBacktest()}
+            disabled={!canRun}
+            title={runBlockReason ?? t('backtest.runBacktestHint')}
+          >
+            {job.isActive ? <span className="spinner" /> : <Icon name="line-chart" size={14} />}
+            {t('backtest.runBacktest')}
+          </button>
+          {!canRun && runBlockReason && slippageValid && cashValid && windowValid && (
+            <p className="run-block-reason">{runBlockReason}</p>
+          )}
+        </div>
 
         {job.state && (
-          <div style={{ marginTop: 16 }}>
+          <div className="job-progress-block">
             <JobProgress
               state={job.state}
               logs={job.logs}

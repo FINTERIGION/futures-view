@@ -25,10 +25,15 @@ export function BottomDrawer() {
   const { onPointerDown, onHandleKeyDown } = useDrawerResize(drawerHeight, setDrawerHeight)
 
   const tabs: TabItem[] = [
-    { key: 'alerts', label: t('workspace.tabAlert') },
     { key: 'backtest', label: t('workspace.tabBacktest') },
+    { key: 'alerts', label: t('workspace.tabAlert') },
     { key: 'runs', label: t('workspace.tabRuns') },
   ]
+
+  const selectTab = (key: string) => {
+    setDrawerTab(key as DrawerTab)
+    if (drawerCollapsed) setDrawerCollapsed(false)
+  }
 
   // The toggle button stays in the exact same slot (far right of this row)
   // whether collapsed or not, and just flips via CSS rotation -- so
@@ -38,7 +43,7 @@ export function BottomDrawer() {
     return (
       <div className="bdrawer bdrawer-collapsed">
         <div className="bdrawer-tabbar">
-          <span className="bdrawer-collapsed-label">{tabs.find((x) => x.key === drawerTab)?.label}</span>
+          <Tabs items={tabs} active={drawerTab} onChange={selectTab} />
           <div className="spacer" />
           <button
             className="btn btn-sm btn-ghost btn-icon bdrawer-toggle is-collapsed"
@@ -70,7 +75,7 @@ export function BottomDrawer() {
         aria-valuenow={Math.round(drawerHeight)}
       />
       <div className="bdrawer-tabbar">
-        <Tabs items={tabs} active={drawerTab} onChange={(k) => setDrawerTab(k as DrawerTab)} />
+        <Tabs items={tabs} active={drawerTab} onChange={selectTab} />
         <div className="spacer" />
         <button
           className="btn btn-sm btn-ghost btn-icon bdrawer-toggle"

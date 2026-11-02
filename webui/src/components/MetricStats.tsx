@@ -2,13 +2,13 @@ import { useTranslation } from 'react-i18next'
 import type { Metrics } from '../api/types'
 
 const HEADLINE_KEYS = [
+  'total_return',
+  'max_drawdown',
   'sharpe_ratio',
+  'win_rate',
+  'annualized_return',
   'sortino_ratio',
   'calmar_ratio',
-  'total_return',
-  'annualized_return',
-  'max_drawdown',
-  'win_rate',
   'profit_factor',
   'n_trades',
   'final_equity',
@@ -17,6 +17,8 @@ const HEADLINE_KEYS = [
   'n_forced_liquidations',
   'n_rejected_orders',
 ]
+
+const PRIMARY_KEYS = new Set(['total_return', 'max_drawdown', 'sharpe_ratio', 'win_rate'])
 
 const PERCENT_KEYS = new Set(['total_return', 'annualized_return', 'max_drawdown', 'win_rate', 'annualized_volatility', 'capital_exposure'])
 const NEGATIVE_IS_BAD = new Set(['max_drawdown'])
@@ -35,7 +37,15 @@ function formatValue(key: string, value: unknown, isInf: boolean, infLabel: stri
   return value.toFixed(4).replace(/\.?0+$/, '') || '0'
 }
 
-export function MetricStats({ metrics, keys = HEADLINE_KEYS }: { metrics: Metrics; keys?: string[] }) {
+export function MetricStats({
+  metrics,
+  keys = HEADLINE_KEYS,
+  highlightPrimary = false,
+}: {
+  metrics: Metrics
+  keys?: string[]
+  highlightPrimary?: boolean
+}) {
   const { t } = useTranslation()
   return (
     <div className="stat-grid">
@@ -50,7 +60,7 @@ export function MetricStats({ metrics, keys = HEADLINE_KEYS }: { metrics: Metric
             ? (numeric * goodDirection > 0 ? 'positive' : 'negative')
             : ''
         return (
-          <div className="stat-tile" key={key}>
+          <div className={`stat-tile ${highlightPrimary && PRIMARY_KEYS.has(key) ? 'stat-tile-primary' : ''}`} key={key}>
             <div className="label">{t(`backtest.metrics.${key}`, key)}</div>
             <div className={`value ${cls}`}>{text}</div>
           </div>

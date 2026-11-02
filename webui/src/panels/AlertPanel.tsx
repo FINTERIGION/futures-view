@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorMessage } from '../api/client'
-import { alertsApi, strategiesApi } from '../api/endpoints'
-import type { AlertLevel, AlertSnapshot, AlertSymbolRow, StrategyInfo } from '../api/types'
+import { alertsApi, dataApi, strategiesApi } from '../api/endpoints'
+import type { AlertLevel, AlertOperation, AlertSnapshot, AlertSymbolRow, StrategyInfo } from '../api/types'
 import { Card } from '../components/Card'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
@@ -19,59 +19,57 @@ import { StrategyParamFields } from './StrategyParamFields'
 export interface AlertEntry {
   id: string
   strategy: string
-  /** Universe snapshotted at save. An older entry that never stored one
-   * previews against the live sidebar so it still opens. */
   symbols: string[]
   params: Record<string, unknown>
   createdAt: number
 }
 
-/** Survives the panel unmounting (tab switch, collapsed drawer) so a finished
- * preview is still there when the user comes back, and an in-flight one is
- * not started a second time. Keyed by entry + the universe that preview
- * actually ran: a saved pool must not be shown for a different one. */
-const previewCache = new Map<string, AlertSnapshot>()
-let inflight: { cacheKey: string; entryId: string; jobId: string } | null = null
+interface ComposerState {
+  mode: 'new' | 'edit' | 'copy'
+  entryId?: string
+}
 
-function previewKey(entryId: string, symbols: string[]): string {
-  return `${entryId}::${symbols.join(',')}`
+interface InflightPreview {
+  cacheKey: string
+  entryId: string
+  jobId: string
+  batch: boolean
+}
+
+/** Snapshots survive tab switches. Params are part of the key so an edit can
+ * never mistake an older configuration's result for its own. */
+const previewCache = new Map<string, AlertSnapshot>()
+const previewErrors = new Map<string, string>()
+const stalePreviews = new Set<string>()
+let inflight: InflightPreview | null = null
+let starting = false
+
+function previewKey(entry: AlertEntry, symbols: string[]): string {
+  return `${entry.id}::${symbols.join(',')}::${JSON.stringify(entry.params)}`
 }
 
 export function resetAlertPreviewState() {
   previewCache.clear()
+  previewErrors.clear()
+  stalePreviews.clear()
   inflight = null
+  starting = false
 }
 
-function cachedPreview(entryId: string, symbols: string[]): AlertSnapshot | undefined {
-  return previewCache.get(previewKey(entryId, symbols))
-}
-
-function rememberPreview(cacheKey: string, snap: AlertSnapshot) {
-  previewCache.set(cacheKey, snap)
-  inflight = null
+function cachedPreview(entry: AlertEntry, symbols: string[]): AlertSnapshot | undefined {
+  return previewCache.get(previewKey(entry, symbols))
 }
 
 function dropPreview(entryId: string) {
   for (const key of [...previewCache.keys()]) {
-    if (key === entryId || key.startsWith(`${entryId}::`)) previewCache.delete(key)
+    if (key.startsWith(`${entryId}::`)) previewCache.delete(key)
   }
-  if (inflight?.entryId === entryId) inflight = null
-}
-
-function markInflight(cacheKey: string, entryId: string, jobId: string) {
-  inflight = { cacheKey, entryId, jobId }
-}
-
-function inflightFor(cacheKey: string): { cacheKey: string; entryId: string; jobId: string } | null {
-  return inflight?.cacheKey === cacheKey ? inflight : null
-}
-
-function inflightJob(jobId: string): { cacheKey: string; entryId: string; jobId: string } | null {
-  return inflight?.jobId === jobId ? inflight : null
-}
-
-function clearInflight() {
-  inflight = null
+  for (const key of [...previewErrors.keys()]) {
+    if (key.startsWith(`${entryId}::`)) previewErrors.delete(key)
+  }
+  for (const key of [...stalePreviews]) {
+    if (key.startsWith(`${entryId}::`)) stalePreviews.delete(key)
+  }
 }
 
 function asSymbolList(value: unknown): string[] {
@@ -98,8 +96,6 @@ function asEntries(value: unknown): AlertEntry[] {
   return out
 }
 
-/** An entry that stored a universe keeps it; one that never did (older
- * localStorage) falls back to the live sidebar so it still previews. */
 function previewSymbols(entry: AlertEntry, liveUniverse: string[]): string[] {
   return entry.symbols.length > 0 ? entry.symbols : liveUniverse
 }
@@ -144,194 +140,289 @@ function lockedParamSummary(strategy: StrategyInfo | undefined, params: Record<s
     .join(', ')
 }
 
+const ACTIONABLE = new Set<AlertOperation>(['open_long', 'open_short', 'close', 'reverse', 'add', 'reduce'])
+
+function operationCounts(snapshot: AlertSnapshot | undefined): Array<[AlertOperation, number]> {
+  if (!snapshot) return []
+  const counts = new Map<AlertOperation, number>()
+  for (const row of snapshot.symbols) {
+    if (!ACTIONABLE.has(row.operation)) continue
+    counts.set(row.operation, (counts.get(row.operation) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+}
+
 function UniverseStrip({
-  universe,
-  hint,
+  value,
+  liveUniverse,
+  onChange,
+  onManage,
 }: {
-  universe: string[]
-  hint: string
+  value: string[]
+  liveUniverse: string[]
+  onChange: (symbols: string[]) => void
+  onManage: () => void
 }) {
   const { t } = useTranslation()
   return (
     <div className="field">
-      <label>
-        {t('common.symbols')} ({universe.length})
-      </label>
-      <div className="toolbar">
-        {universe.length === 0 ? (
+      <div className="field-label-row">
+        <label>{`${t('common.symbols')} (${value.length})`}</label>
+        <div className="toolbar">
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange([...liveUniverse])}>
+            {t('alerts.useLiveUniverse')}
+          </button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={onManage}>
+            {t('workspace.manageProducts')}
+          </button>
+        </div>
+      </div>
+      <div className="universe-chip-list">
+        {value.length === 0 ? (
           <span className="badge badge-neutral">{t('workspace.noProducts')}</span>
         ) : (
-          universe.map((sym, i) => (
-            <span key={sym} className={`badge ${i === 0 ? 'badge-accent' : 'badge-neutral'}`}>
-              {sym}
-            </span>
+          value.map((symbol) => (
+            <button
+              key={symbol}
+              type="button"
+              className="universe-chip"
+              title={t('workspace.removeFromUniverse', { symbol })}
+              aria-label={t('workspace.removeFromUniverse', { symbol })}
+              onClick={() => onChange(value.filter((s) => s !== symbol))}
+            >
+              {symbol}
+              <Icon name="close" size={11} />
+            </button>
           ))
         )}
       </div>
-      <p className="field-hint">{hint}</p>
+      <p className="field-hint">{t('alerts.universeHint')}</p>
     </div>
   )
 }
 
-/**
- * The drawer's Alert tab: a history-style list of saved strategies. Creating
- * one edits that strategy's params the same way the Backtest tab does, then
- * freezes the params and the sidebar universe on the row (params live in
- * that row, not on a second title). Selecting a row expands the per-product
- * contract / next action / stop / take-profit table immediately under it.
- */
+/** Saved strategy configurations with on-demand, per-row signal snapshots.
+ * Expanding a row never starts a job; explicit refreshes share the existing
+ * alert job slot and additional requests wait in a sequential queue. */
 export function AlertPanel() {
   const { t } = useTranslation()
-  const { universe } = useWorkspace()
+  const { universe, setChartSymbol, setSidebarOpen } = useWorkspace()
   const job = useJobSlot('alert')
+  const dataJob = useJobSlot('data')
   const jobRef = useRef(job)
-  const previewingKeyRef = useRef<string | null>(null)
   const entriesRef = useRef<AlertEntry[]>([])
   const universeRef = useRef(universe)
+  const pendingRef = useRef<string[]>([])
 
   const { data: strategies } = useQuery({ queryKey: ['strategies'], queryFn: strategiesApi.list })
 
   const [entriesRaw, setEntriesRaw] = useStickyState<AlertEntry[]>('alertEntries', [])
   const entries = asEntries(entriesRaw)
   const [activeId, setActiveId] = useStickyState('alertActiveId', '')
-  const [composing, setComposing] = useState(false)
+  const [composer, setComposer] = useState<ComposerState | null>(null)
+  const [composeSeq, setComposeSeq] = useState(0)
+  const [composeInitialParams, setComposeInitialParams] = useState<Record<string, unknown>>({})
   const [draftStrategy, setDraftStrategy] = useState('')
+  const [draftUniverse, setDraftUniverse] = useState<string[]>([])
   const [paramDraft, setParamDraft] = useState<Record<string, string>>({})
   const [seededKey, setSeededKey] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<AlertEntry | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [pendingOnly, setPendingOnly] = useState(false)
+  const [dataStarting, setDataStarting] = useState(false)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [pendingIds, setPendingIds] = useState<string[]>([])
+  const [batchTotal, setBatchTotal] = useState(0)
   const [cacheRev, setCacheRev] = useState(0)
-
-  // Nothing is selected until a row is clicked (or a new one is saved).
-  // Defaulting to `entries[0]` would expand the first row on every visit.
-  const resolvedActiveId = entries.some((e) => e.id === activeId) ? activeId : ''
-  const activeEntry = entries.find((e) => e.id === resolvedActiveId) ?? null
   void cacheRev
-  const activeSymbols = activeEntry ? previewSymbols(activeEntry, universe) : []
+
+  const resolvedActiveId = entries.some((e) => e.id === activeId) ? activeId : ''
   const firstRunnable = strategies?.find((s) => s.errors.length === 0)?.key ?? ''
   const strategyKey =
     strategies !== undefined && (!draftStrategy || !strategies.some((s) => s.key === draftStrategy))
       ? firstRunnable
       : draftStrategy
   const composeStrategy = strategies?.find((s) => s.key === strategyKey)
+
   useEffect(() => {
     jobRef.current = job
     entriesRef.current = entries
     universeRef.current = universe
   })
 
-  const startPreview = useCallback(async (entry: AlertEntry) => {
-    const symbols = previewSymbols(entry, universeRef.current)
-    if (symbols.length === 0) return
-    const cacheKey = previewKey(entry.id, symbols)
-    previewingKeyRef.current = cacheKey
-    setError(null)
-    if (inflightFor(cacheKey) && jobRef.current.isActive) return
-    jobRef.current.reset()
-    try {
-      const { job_id } = await alertsApi.preview({
-        strategy: entry.strategy,
-        symbols,
-        params: entry.params,
-      })
-      if (previewingKeyRef.current !== cacheKey) return
-      markInflight(cacheKey, entry.id, job_id)
-      jobRef.current.start(job_id)
+  const enqueue = useCallback((ids: string[]) => {
+    const additions = ids.filter((id) => !pendingRef.current.includes(id))
+    if (additions.length === 0) return
+    pendingRef.current = [...pendingRef.current, ...additions]
+    setPendingIds(pendingRef.current)
+  }, [setPendingIds])
+
+  const startPreview = useCallback(
+    async (entry: AlertEntry, batch = false) => {
+      const symbols = previewSymbols(entry, universeRef.current)
+      if (symbols.length === 0) return
+      const cacheKey = previewKey(entry, symbols)
+      if (inflight?.cacheKey === cacheKey && jobRef.current.isActive) return
+      if (starting || jobRef.current.isActive || inflight) {
+        enqueue([entry.id])
+        return
+      }
+
+      starting = true
+      previewErrors.delete(cacheKey)
+      stalePreviews.delete(cacheKey)
+      jobRef.current.reset()
       setCacheRev((n) => n + 1)
-    } catch (err) {
-      if (previewingKeyRef.current === cacheKey) {
-        clearInflight()
-        setError(errorMessage(err))
+      try {
+        const { job_id } = await alertsApi.preview({
+          strategy: entry.strategy,
+          symbols,
+          params: entry.params,
+        })
+        inflight = { cacheKey, entryId: entry.id, jobId: job_id, batch }
+        jobRef.current.start(job_id)
+      } catch (err) {
+        previewErrors.set(cacheKey, errorMessage(err))
+      } finally {
+        starting = false
         setCacheRev((n) => n + 1)
       }
-    }
-  }, [])
-
-  const previewSymbolsKey = activeSymbols.join(',')
-  useEffect(() => {
-    if (!resolvedActiveId || composing) return
-    if (activeSymbols.length === 0) return
-    if (cachedPreview(resolvedActiveId, activeSymbols)) return
-    if (inflightFor(previewKey(resolvedActiveId, activeSymbols))) return
-    const entry = entriesRef.current.find((e) => e.id === resolvedActiveId)
-    if (entry) void startPreview(entry)
-  }, [resolvedActiveId, previewSymbolsKey, composing, startPreview, activeSymbols.length])
+    },
+    [enqueue, setCacheRev],
+  )
 
   useEffect(() => {
     const state = job.state
-    const tracked = state ? inflightJob(state.id) : null
-    if (!state || !tracked) return
-    if (state.status === 'done' && isAlertSnapshot(state.result)) {
-      rememberPreview(tracked.cacheKey, state.result)
+    const tracked = state && inflight?.jobId === state.id ? inflight : null
+    if (!tracked) return
+    if (job.lost) {
+      previewErrors.set(tracked.cacheKey, t('jobs.lost'))
+      inflight = null
       setCacheRev((n) => n + 1)
-    } else if (state.status === 'error') {
-      clearInflight()
+      return
+    }
+    if (state?.status === 'done' && isAlertSnapshot(state.result)) {
+      previewCache.set(tracked.cacheKey, state.result)
+      previewErrors.delete(tracked.cacheKey)
+      stalePreviews.delete(tracked.cacheKey)
+      inflight = null
+      setCacheRev((n) => n + 1)
+    } else if (state?.status === 'done' && 'result' in state) {
+      // SSE terminal frames deliberately omit `result`; useJob follows them
+      // with a GET that carries it. Only a completed response with an invalid
+      // result is a failure -- the frame in between must keep the queue held.
+      previewErrors.set(tracked.cacheKey, t('alerts.previewFailed'))
+      inflight = null
+      setCacheRev((n) => n + 1)
+    } else if (state?.status === 'error' || state?.status === 'cancelled') {
+      if (state.status !== 'cancelled') previewErrors.set(tracked.cacheKey, state.error ?? t('alerts.previewFailed'))
+      inflight = null
       setCacheRev((n) => n + 1)
     }
-  }, [job.state])
+  }, [job.state, job.lost, t])
+
+  useEffect(() => {
+    if (starting || job.isActive || inflight) return
+    if (pendingIds.length === 0) {
+      if (batchTotal > 0) setBatchTotal(0)
+      return
+    }
+    const [nextId, ...rest] = pendingIds
+    pendingRef.current = rest
+    setPendingIds(rest)
+    const entry = entriesRef.current.find((e) => e.id === nextId)
+    if (entry) void startPreview(entry, batchTotal > 0)
+  }, [job.isActive, pendingIds, batchTotal, cacheRev, startPreview])
+
+  const announcedDataJob = useRef<string | null>(null)
+  useEffect(() => {
+    const state = dataJob.state
+    if (state?.status !== 'done' || announcedDataJob.current === state.id) return
+    announcedDataJob.current = state.id
+    for (const key of previewCache.keys()) stalePreviews.add(key)
+    setCacheRev((n) => n + 1)
+  }, [dataJob.state])
 
   let draft = paramDraft
-  if (composing && composeStrategy && seededKey !== composeStrategy.key) {
-    draft = seedParamDraft(composeStrategy, rememberedParams(composeStrategy.key))
-    setSeededKey(composeStrategy.key)
+  const composeSeedKey = composer && composeStrategy ? `${composeSeq}:${composeStrategy.key}` : null
+  if (composer && composeStrategy && composeSeedKey && seededKey !== composeSeedKey) {
+    const initial = composer.mode === 'new' ? rememberedParams(composeStrategy.key) : composeInitialParams
+    draft = seedParamDraft(composeStrategy, initial)
+    setSeededKey(composeSeedKey)
     setParamDraft(draft)
   }
 
   const parsedParams = composeStrategy
     ? effectiveParams(composeStrategy, draft)
     : { ok: true as const, params: {} as Record<string, unknown>, errors: {} as ParamFieldErrors }
-
-  const onParamDraftChange = (name: string, raw: string) => {
-    if (!composeStrategy) return
-    setParamDraft({ ...draft, [name]: raw })
-  }
-
-  const onResetParams = () => {
-    if (!composeStrategy) return
-    setParamDraft(seedParamDraft(composeStrategy, {}))
-  }
-
   const strategyBroken = Boolean(composeStrategy?.errors.length)
-  const canSave =
-    Boolean(strategyKey) && !strategyBroken && parsedParams.ok && universe.length > 0
+  const canSave = Boolean(composer && strategyKey) && !strategyBroken && parsedParams.ok && draftUniverse.length > 0
 
-  const openCompose = () => {
-    setDraftStrategy('')
+  const openCompose = (mode: ComposerState['mode'], entry?: AlertEntry) => {
+    const info = entry ? strategies?.find((s) => s.key === entry.strategy) : undefined
+    setComposer({ mode, entryId: mode === 'edit' ? entry?.id : undefined })
+    setComposeSeq((n) => n + 1)
+    setDraftStrategy(entry?.strategy ?? '')
+    setComposeInitialParams(entry?.params ?? {})
+    setParamDraft(entry && info ? seedParamDraft(info, entry.params) : {})
+    setDraftUniverse(mode === 'new' ? [...universe] : (entry ? [...previewSymbols(entry, universe)] : [...universe]))
     setSeededKey(null)
-    setParamDraft({})
-    setComposing(true)
   }
 
   const onSave = () => {
-    if (!canSave || !parsedParams.ok) return
+    if (!composer || !canSave || !parsedParams.ok) return
+    const previous = composer.entryId ? entries.find((e) => e.id === composer.entryId) : undefined
     const entry: AlertEntry = {
-      id: newId(),
+      id: previous?.id ?? newId(),
       strategy: strategyKey,
-      symbols: [...universe],
+      symbols: [...draftUniverse],
       params: parsedParams.params,
-      createdAt: Date.now(),
+      createdAt: previous?.createdAt ?? Date.now(),
     }
-    setEntriesRaw([entry, ...entries])
+    const next = previous ? entries.map((e) => (e.id === entry.id ? entry : e)) : [entry, ...entries]
+    dropPreview(entry.id)
+    setEntriesRaw(next)
     setActiveId(entry.id)
-    setComposing(false)
+    setComposer(null)
+    void startPreview(entry)
   }
 
   const onDelete = () => {
     if (!confirmDelete) return
     dropPreview(confirmDelete.id)
-    const next = entries.filter((e) => e.id !== confirmDelete.id)
-    setEntriesRaw(next)
+    pendingRef.current = pendingRef.current.filter((id) => id !== confirmDelete.id)
+    setPendingIds(pendingRef.current)
+    setEntriesRaw(entries.filter((e) => e.id !== confirmDelete.id))
     if (activeId === confirmDelete.id) setActiveId('')
     setConfirmDelete(null)
     setCacheRev((n) => n + 1)
   }
 
-  const onRefresh = () => {
-    if (!activeEntry) return
-    dropPreview(activeEntry.id)
-    setError(null)
-    setCacheRev((n) => n + 1)
-    void startPreview(activeEntry)
+  const refreshAll = () => {
+    const ids = entries.filter((e) => previewSymbols(e, universe).length > 0 && inflight?.entryId !== e.id).map((e) => e.id)
+    if (ids.length === 0) return
+    setBatchTotal(ids.length)
+    enqueue(ids)
+  }
+
+  const cancelBatch = () => {
+    pendingRef.current = []
+    setPendingIds([])
+    setBatchTotal(0)
+  }
+
+  const runDataUpdate = async (entry: AlertEntry) => {
+    const symbols = previewSymbols(entry, universe)
+    if (symbols.length === 0 || dataStarting || dataJob.isActive) return
+    setUpdateError(null)
+    setDataStarting(true)
+    try {
+      const { job_id } = await dataApi.update(symbols, false, false)
+      dataJob.start(job_id)
+    } catch (err) {
+      setUpdateError(errorMessage(err))
+    } finally {
+      setDataStarting(false)
+    }
   }
 
   const paramsOf = (entry: AlertEntry) => {
@@ -339,42 +430,72 @@ export function AlertPanel() {
     return lockedParamSummary(info, entry.params)
   }
 
+  const statusOf = (entry: AlertEntry): 'idle' | 'queued' | 'running' | 'ready' | 'stale' | 'error' => {
+    const symbols = previewSymbols(entry, universe)
+    const key = previewKey(entry, symbols)
+    if (inflight?.cacheKey === key && job.isActive) return 'running'
+    if (pendingIds.includes(entry.id)) return 'queued'
+    if (previewErrors.has(key)) return 'error'
+    if (!previewCache.has(key)) return 'idle'
+    return stalePreviews.has(key) ? 'stale' : 'ready'
+  }
+
+  const statusBadge = (entry: AlertEntry) => {
+    const status = statusOf(entry)
+    const variant = status === 'ready' ? 'badge-success' : status === 'error' ? 'badge-danger' : status === 'stale' ? 'badge-warning' : status === 'running' ? 'badge-accent' : 'badge-neutral'
+    return <span className={`badge ${variant}`}>{t(`alerts.status.${status}`)}</span>
+  }
+
+  const signalSummary = (entry: AlertEntry) => {
+    const snap = cachedPreview(entry, previewSymbols(entry, universe))
+    const counts = operationCounts(snap)
+    if (!snap) return <span className="alert-summary-empty">—</span>
+    if (counts.length === 0) return <span className="alert-no-action">{t('alerts.noPendingActions')}</span>
+    return (
+      <div className="alert-signal-summary">
+        {counts.map(([operation, count]) => (
+          <span key={operation} className={`alert-signal op-${operation}`}>
+            {t(`alerts.operations.${operation}`)} {count}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const rowActions = (entry: AlertEntry) => (
+    <div className="alert-row-actions">
+      <button
+        type="button"
+        className="btn btn-sm btn-ghost btn-icon"
+        title={t('alerts.updateData')}
+        aria-label={t('alerts.updateData')}
+        disabled={dataStarting || dataJob.isActive || previewSymbols(entry, universe).length === 0}
+        onClick={(e) => { e.stopPropagation(); void runDataUpdate(entry) }}
+      >
+        <Icon name="download" size={14} />
+      </button>
+      <button type="button" className="btn btn-sm btn-ghost btn-icon" title={t('alerts.refresh')} aria-label={t('alerts.refresh')} onClick={(e) => { e.stopPropagation(); void startPreview(entry) }}>
+        <Icon name="refresh" size={14} />
+      </button>
+      <button type="button" className="btn btn-sm btn-ghost btn-icon" title={t('alerts.edit')} aria-label={t('alerts.edit')} onClick={(e) => { e.stopPropagation(); openCompose('edit', entry) }}>
+        <Icon name="pencil" size={14} />
+      </button>
+      <button type="button" className="btn btn-sm btn-ghost btn-icon" title={t('alerts.copy')} aria-label={t('alerts.copy')} onClick={(e) => { e.stopPropagation(); openCompose('copy', entry) }}>
+        <Icon name="copy" size={14} />
+      </button>
+      <button type="button" className="btn btn-sm btn-danger btn-icon" title={t('common.delete')} aria-label={t('common.delete')} onClick={(e) => { e.stopPropagation(); setConfirmDelete(entry) }}>
+        <Icon name="trash" size={14} />
+      </button>
+    </div>
+  )
+
   const entryColumns: Column<AlertEntry>[] = [
-    { key: 'strategy', header: t('common.strategy'), render: (r) => r.strategy },
-    {
-      key: 'symbols',
-      header: t('common.symbols'),
-      render: (r) => (r.symbols.length > 0 ? r.symbols.join(', ') : '—'),
-    },
-    {
-      key: 'params',
-      header: t('alerts.params'),
-      render: (r) => (
-        <span title={t('alerts.paramsLocked')}>{paramsOf(r) || '—'}</span>
-      ),
-    },
-    {
-      key: 'created',
-      header: t('runs.created'),
-      render: (r) => (r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'),
-    },
-    {
-      key: 'actions',
-      header: t('common.actions'),
-      render: (r) => (
-        <button
-          className="btn btn-sm btn-danger btn-icon"
-          aria-label={t('common.delete')}
-          title={t('common.delete')}
-          onClick={(e) => {
-            e.stopPropagation()
-            setConfirmDelete(r)
-          }}
-        >
-          <Icon name="trash" size={14} />
-        </button>
-      ),
-    },
+    { key: 'strategy', header: t('common.strategy'), render: (r) => <strong className="alert-strategy">{r.strategy}</strong> },
+    { key: 'symbols', header: t('common.symbols'), render: (r) => (r.symbols.length > 0 ? r.symbols.join(', ') : '—') },
+    { key: 'signals', header: t('alerts.latestSignals'), render: signalSummary },
+    { key: 'asof', header: t('alerts.asofColumn'), render: (r) => cachedPreview(r, previewSymbols(r, universe))?.asof ?? '—' },
+    { key: 'status', header: t('common.status'), render: statusBadge },
+    { key: 'actions', header: t('common.actions'), render: rowActions },
   ]
 
   const symbolColumns: Column<AlertSymbolRow>[] = [
@@ -383,164 +504,139 @@ export function AlertPanel() {
     {
       key: 'operation',
       header: t('alerts.operation'),
-      render: (r) => t(`alerts.operations.${r.operation}`),
+      render: (r) => <span className={ACTIONABLE.has(r.operation) ? `alert-operation op-${r.operation}` : 'alert-operation'}>{t(`alerts.operations.${r.operation}`)}</span>,
     },
+    { key: 'stop', header: t('alerts.stop'), numeric: true, render: (r) => formatLevel(r.stop, (d) => t('alerts.distanceFromNextOpen', { distance: d })) },
+    { key: 'take_profit', header: t('alerts.takeProfit'), numeric: true, render: (r) => formatLevel(r.take_profit, (d) => t('alerts.distanceFromNextOpen', { distance: d })) },
     {
-      key: 'stop',
-      header: t('alerts.stop'),
-      numeric: true,
-      render: (r) => formatLevel(r.stop, (d) => t('alerts.distanceFromNextOpen', { distance: d })),
-    },
-    {
-      key: 'take_profit',
-      header: t('alerts.takeProfit'),
-      numeric: true,
-      render: (r) => formatLevel(r.take_profit, (d) => t('alerts.distanceFromNextOpen', { distance: d })),
+      key: 'chart',
+      header: '',
+      render: (r) => (
+        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setChartSymbol(r.symbol)}>
+          <Icon name="line-chart" size={13} />
+          {t('alerts.viewChart')}
+        </button>
+      ),
     },
   ]
 
-  const shownError = error ?? (job.state?.status === 'error' ? job.state.error : null)
-
   const renderExpanded = (entry: AlertEntry) => {
     const symbols = previewSymbols(entry, universe)
-    const snap = cachedPreview(entry.id, symbols)
-    const expanding =
-      symbols.length > 0 &&
-      !snap &&
-      !shownError &&
-      job.state?.status !== 'error'
+    const key = previewKey(entry, symbols)
+    const snap = previewCache.get(key)
+    const error = previewErrors.get(key)
+    const running = inflight?.cacheKey === key && job.state
     return (
       <div className="alert-expand">
-        {symbols.length === 0 && (
-          <div className="empty-state">
-            <span className="empty-state-title">{t('workspace.noProducts')}</span>
-            <p className="empty-state-hint">{t('alerts.universeHint')}</p>
+        <div className="alert-expand-bar">
+          <span className="alert-params-summary" title={paramsOf(entry)}>{paramsOf(entry) || t('alerts.defaultParams')}</span>
+          <div className="spacer" />
+          {snap?.asof && <span className="field-hint">{t('alerts.asof', { date: snap.asof })}</span>}
+          <button type="button" className="btn btn-sm btn-primary" disabled={symbols.length === 0} onClick={() => void startPreview(entry)}>
+            <Icon name="refresh" size={13} />
+            {snap ? t('alerts.refresh') : t('alerts.computeNow')}
+          </button>
+        </div>
+        {running && (
+          <JobProgress state={job.state!} logs={job.logs} onCancel={job.cancel} streaming={job.streaming} lost={job.lost} />
+        )}
+        {pendingIds.includes(entry.id) && !running && <div className="hint-banner">{t('alerts.queuedHint')}</div>}
+        {error && <div className="hint-banner warning"><strong>{t('alerts.previewFailed')}</strong> — {error}</div>}
+        {snap?.blown_up && <div className="hint-banner danger"><strong>{t('backtest.blownUp')}</strong> — {t('alerts.blownUpHint')}</div>}
+        {snap && <Table columns={symbolColumns} rows={snap.symbols} rowKey={(r) => r.symbol} />}
+        {!snap && !running && !error && symbols.length > 0 && (
+          <div className="empty-state alert-empty-preview">
+            <span className="empty-state-title">{t('alerts.noSnapshot')}</span>
+            <p className="empty-state-hint">{t('alerts.noSnapshotHint')}</p>
           </div>
         )}
-        {expanding && job.state && (
-          <div style={{ marginBottom: 8 }}>
-            <JobProgress
-              state={job.state}
-              logs={job.logs}
-              onCancel={job.cancel}
-              streaming={job.streaming}
-              lost={job.lost}
-            />
-          </div>
-        )}
-        {expanding && !job.state && (
-          <div className="empty-state">
-            <span className="spinner" />
-            <span>{t('common.loading')}</span>
-          </div>
-        )}
-        {shownError && (
-          <div className="hint-banner warning">
-            <strong>{t('alerts.previewFailed')}</strong> — {shownError}
-          </div>
-        )}
-        {snap && (
-          <>
-            {snap.blown_up && (
-              <div className="hint-banner danger">
-                <strong>{t('backtest.blownUp')}</strong> — {t('alerts.blownUpHint')}
-              </div>
-            )}
-            <div className="alert-expand-bar">
-              {snap.asof && (
-                <span className="field-hint" style={{ margin: 0 }}>
-                  {t('alerts.asof', { date: snap.asof })}
-                </span>
-              )}
-              <button type="button" className="btn btn-sm" onClick={onRefresh}>
-                {t('alerts.refresh')}
-              </button>
-            </div>
-            <Table columns={symbolColumns} rows={snap.symbols} rowKey={(r) => r.symbol} />
-          </>
-        )}
+        {symbols.length === 0 && <div className="hint-banner warning">{t('alerts.universeRequired')}</div>}
       </div>
     )
   }
 
+  const visibleEntries = pendingOnly
+    ? entries.filter((entry) => operationCounts(cachedPreview(entry, previewSymbols(entry, universe))).length > 0)
+    : entries
+  const batchRunning = batchTotal > 0 && (pendingIds.length > 0 || Boolean(inflight?.batch))
+  const batchDone = Math.max(0, batchTotal - pendingIds.length - (inflight?.batch ? 1 : 0))
+
   return (
-    <div>
-      <div className="toolbar">
-        <button
-          type="button"
-          className={`btn btn-sm ${composing ? 'btn-primary' : ''}`}
-          onClick={() => (composing ? setComposing(false) : openCompose())}
-        >
+    <div className="alerts-panel">
+      <div className="toolbar alerts-toolbar">
+        <button type="button" className={`btn btn-sm ${composer?.mode === 'new' ? 'btn-primary' : ''}`} onClick={() => (composer?.mode === 'new' ? setComposer(null) : openCompose('new'))}>
           <Icon name="plus" size={14} />
           {t('alerts.add')}
         </button>
+        <button type="button" className={`btn btn-sm ${pendingOnly ? 'btn-primary' : ''}`} aria-pressed={pendingOnly} onClick={() => setPendingOnly((v) => !v)}>
+          {t('alerts.pendingOnly')}
+        </button>
+        <div className="spacer" />
+        {batchRunning && <span className="alert-batch-progress">{t('alerts.batchProgress', { done: batchDone, total: batchTotal })}</span>}
+        {pendingIds.length > 0 && batchTotal > 0 && <button type="button" className="btn btn-sm" onClick={cancelBatch}>{t('alerts.cancelQueue')}</button>}
+        <button type="button" className="btn btn-sm" disabled={entries.length === 0} onClick={refreshAll}>
+          <Icon name="refresh" size={13} />
+          {t('alerts.refreshAll')}
+        </button>
       </div>
 
-      {composing && (
-        <div style={{ marginTop: 12 }}>
-          <Card title={t('alerts.addTitle')}>
-            <div className="field">
-              <label>{t('common.strategy')}</label>
-              <select value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
-                {(strategies ?? []).map((s) => (
-                  <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
-                    {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
-                  </option>
-                ))}
-              </select>
-              <p className="field-hint">{t('alerts.paramsHint')}</p>
-            </div>
-            {composeStrategy && (
-              <StrategyParamFields
-                strategy={composeStrategy}
-                paramDraft={draft}
-                onParamDraftChange={onParamDraftChange}
-                onResetParams={onResetParams}
-                paramErrors={parsedParams.errors}
-                idPrefix="alert-param"
-              />
-            )}
-            <UniverseStrip universe={universe} hint={t('alerts.universeHint')} />
-            <div className="toolbar" style={{ marginTop: 8 }}>
-              <button type="button" className="btn btn-primary" onClick={onSave} disabled={!canSave}>
-                {t('common.save')}
-              </button>
-              <button type="button" className="btn" onClick={() => setComposing(false)}>
-                {t('common.cancel')}
-              </button>
-            </div>
-          </Card>
-        </div>
+      {updateError && <div className="hint-banner warning">{t('common.updateFailed')} — {updateError}</div>}
+
+      {composer && (
+        <Card title={t(`alerts.${composer.mode}Title`)} className="alert-composer">
+          <div className="field">
+            <label>{t('common.strategy')}</label>
+            <select value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
+              {(strategies ?? []).map((s) => (
+                <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
+                  {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
+                </option>
+              ))}
+            </select>
+            <p className="field-hint">{t('alerts.paramsHint')}</p>
+          </div>
+          {composeStrategy && (
+            <StrategyParamFields
+              strategy={composeStrategy}
+              paramDraft={draft}
+              onParamDraftChange={(name, raw) => setParamDraft({ ...draft, [name]: raw })}
+              onResetParams={() => composeStrategy && setParamDraft(seedParamDraft(composeStrategy, {}))}
+              paramErrors={parsedParams.errors}
+              idPrefix="alert-param"
+            />
+          )}
+          <UniverseStrip value={draftUniverse} liveUniverse={universe} onChange={setDraftUniverse} onManage={() => setSidebarOpen(true)} />
+          <div className="toolbar alert-composer-actions">
+            <button type="button" className="btn btn-primary" onClick={onSave} disabled={!canSave}>
+              {t('alerts.saveAndCompute')}
+            </button>
+            <button type="button" className="btn" onClick={() => setComposer(null)}>{t('common.cancel')}</button>
+          </div>
+        </Card>
       )}
 
-      {!composing && entries.length === 0 && (
+      {!composer && entries.length === 0 && (
         <div className="empty-state">
-          <span className="empty-state-icon">
-            <Icon name="alert" size={18} />
-          </span>
+          <span className="empty-state-icon"><Icon name="alert" size={18} /></span>
           <span className="empty-state-title">{t('alerts.noEntries')}</span>
           <p className="empty-state-hint">{t('alerts.noEntriesHint')}</p>
         </div>
       )}
 
       {entries.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <Table
-            columns={entryColumns}
-            rows={entries}
-            rowKey={(r) => r.id}
-            emptyMessage={t('alerts.noEntries')}
-            onRowClick={(r) => {
-              setActiveId(r.id)
-              setComposing(false)
-            }}
-            rowClassName={(r) =>
-              [resolvedActiveId === r.id ? 'row-open' : '', 'row-selectable'].filter(Boolean).join(' ')
-            }
-            isExpanded={(r) => !composing && r.id === resolvedActiveId}
-            renderExpanded={renderExpanded}
-          />
-        </div>
+        <Table
+          columns={entryColumns}
+          rows={visibleEntries}
+          rowKey={(r) => r.id}
+          emptyMessage={pendingOnly ? t('alerts.noPendingEntries') : t('alerts.noEntries')}
+          onRowClick={(r) => {
+            setActiveId(resolvedActiveId === r.id ? '' : r.id)
+            setComposer(null)
+          }}
+          rowClassName={(r) => [resolvedActiveId === r.id ? 'row-open' : '', 'row-selectable'].filter(Boolean).join(' ')}
+          isExpanded={(r) => !composer && r.id === resolvedActiveId}
+          renderExpanded={renderExpanded}
+        />
       )}
 
       <ConfirmDialog

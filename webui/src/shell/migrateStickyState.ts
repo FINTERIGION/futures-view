@@ -20,15 +20,31 @@ const PREFIX = 'ft.'
  */
 export function migrateStickyState(): void {
   try {
-    if (localStorage.getItem(PREFIX + 'chartSymbol') !== null) return
-    const raw = localStorage.getItem(PREFIX + 'symbols')
-    if (raw === null) return
-    const symbols = JSON.parse(raw) as unknown
-    if (!Array.isArray(symbols) || symbols.length === 0) return
-    const [chartSymbol, ...extraSymbols] = symbols as string[]
-    localStorage.setItem(PREFIX + 'chartSymbol', JSON.stringify(chartSymbol))
-    localStorage.setItem(PREFIX + 'extraSymbols', JSON.stringify(extraSymbols))
-    localStorage.removeItem(PREFIX + 'symbols')
+    if (localStorage.getItem(PREFIX + 'chartSymbol') === null) {
+      const raw = localStorage.getItem(PREFIX + 'symbols')
+      if (raw !== null) {
+        const symbols = JSON.parse(raw) as unknown
+        if (Array.isArray(symbols) && symbols.length > 0) {
+          const [chartSymbol, ...extraSymbols] = symbols as string[]
+          localStorage.setItem(PREFIX + 'chartSymbol', JSON.stringify(chartSymbol))
+          localStorage.setItem(PREFIX + 'extraSymbols', JSON.stringify(extraSymbols))
+          localStorage.removeItem(PREFIX + 'symbols')
+        }
+      }
+    }
+
+    if (localStorage.getItem(PREFIX + 'universe') === null) {
+      const extraRaw = localStorage.getItem(PREFIX + 'extraSymbols')
+      const chartRaw = localStorage.getItem(PREFIX + 'chartSymbol')
+      if (extraRaw !== null || chartRaw !== null) {
+        const extra = extraRaw ? JSON.parse(extraRaw) : []
+        const chart = chartRaw ? JSON.parse(chartRaw) : ''
+        const merged = Array.from(new Set([chart, ...(Array.isArray(extra) ? extra : [])].filter(Boolean)))
+        if (merged.length > 0) {
+          localStorage.setItem(PREFIX + 'universe', JSON.stringify(merged))
+        }
+      }
+    }
   } catch {
     // Storage unavailable or the stored value didn't parse -- the workspace
     // falls back to its own defaults, same as a first-ever visit.

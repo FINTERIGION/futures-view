@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { productsApi } from '../api/endpoints'
 import { AccessDrawer } from '../auth/AccessDrawer'
@@ -40,7 +40,7 @@ function CollapsedSidebarRail({ onExpand, universeCount }: { onExpand: () => voi
  * SymbolSidebar, chart/SuperChart).
  */
 export function ChartWorkspace() {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -85,6 +85,17 @@ export function ChartWorkspace() {
     '?': () => setShortcutsOpen(true),
   })
 
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && window.matchMedia?.('(max-width: 900px)').matches) {
+        setSidebarOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [sidebarOpen, setSidebarOpen])
+
   // The grid row must actually shrink on collapse, not just the drawer's own
   // content -- otherwise the row stays reserved at the last resized height
   // (drawerHeight) and the chart above never grows into the freed space.
@@ -101,9 +112,17 @@ export function ChartWorkspace() {
         onShowAccess={() => setAccessOpen(true)}
       />
       <div className="workspace" style={style}>
-        <SuperChart productName={productName} />
+        <SuperChart />
         {sidebarOpen ? (
-          <SymbolSidebar />
+          <>
+            <button
+              type="button"
+              className="sidebar-backdrop"
+              aria-label={t('workspace.collapseSidebar')}
+              onClick={() => setSidebarOpen(false)}
+            />
+            <SymbolSidebar />
+          </>
         ) : (
           <CollapsedSidebarRail onExpand={() => setSidebarOpen(true)} universeCount={universe.length} />
         )}

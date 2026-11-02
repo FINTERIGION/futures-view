@@ -13,10 +13,13 @@ export function Tabs({
   onChange: (key: string) => void
 }) {
   return (
-    <div className="tabs">
+    <div className="tabs" role="tablist">
       {items.map((item) => (
         <button
           key={item.key}
+          type="button"
+          role="tab"
+          aria-selected={active === item.key}
           className={`tab ${active === item.key ? 'active' : ''}`}
           onClick={() => onChange(item.key)}
         >

@@ -30,24 +30,19 @@ interface Sequenced<T> {
 }
 
 interface WorkspaceState {
-  /** The product the main chart draws -- structurally always the first
-   * member of `universe`, so it can never be unchecked out of a backtest. */
+  /** The product the main chart draws. Independent from `universe`. */
   chartSymbol: string
   setChartSymbol: (symbol: string) => void
 
-  /** Products checked into the backtest universe in addition to the charted
-   * one. Never contains `chartSymbol` itself -- see `universe`. */
-  extraSymbols: string[]
-  /** Check or uncheck a symbol into the universe. A no-op on the charted
-   * symbol, which is always in; the UI additionally renders that row's
-   * checkbox as checked-and-disabled so the rule is visible, not just
-   * enforced. */
-  toggleUniverse: (symbol: string) => void
-  setExtraSymbols: (symbols: string[]) => void
-  /** `[chartSymbol, ...extraSymbols]`, de-duplicated -- the only place this
-   * union is computed, so a backtest run, an alert preview, and the sidebar's
-   * checkboxes can never disagree about who is in it. */
+  /** Products checked into the backtest universe. Independent from `chartSymbol`. */
   universe: string[]
+  setUniverse: (symbols: string[] | ((prev: string[]) => string[])) => void
+  /** Check or uncheck a symbol into the universe. */
+  toggleUniverse: (symbol: string) => void
+
+  /** Products in the universe (alias kept for compatibility). */
+  extraSymbols: string[]
+  setExtraSymbols: (symbols: string[] | ((prev: string[]) => string[])) => void
 
   /** The backtest run currently overlaid on the chart. URL-only
    * (no sticky fallback): a run id a week old is more likely to 404 (see
@@ -127,12 +122,23 @@ const WorkspaceContext = createContext<WorkspaceState | null>(null)
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [stickyChartSymbol, setStickyChartSymbol] = useStickyState('chartSymbol', '')
+  const [stickyChartSymbol, setStickyChartSymbol] = useStickyState('chartSymbol', 'SA')
   const chartSymbol = searchParams.get('symbol') ?? stickyChartSymbol
 
-  const [extraSymbolsRaw, setExtraSymbolsRaw] = useStickyState<string[]>('extraSymbols', [])
-  const extraSymbols = extraSymbolsRaw.filter((s) => s !== chartSymbol)
-  const universe = [chartSymbol, ...extraSymbols].filter(Boolean)
+  const [universe, setUniverse] = useStickyState<string[]>('universe', () => {
+    try {
+      const extraRaw = localStorage.getItem('ft.extraSymbols')
+      const chartRaw = localStorage.getItem('ft.chartSymbol')
+      if (extraRaw !== null || chartRaw !== null) {
+        const extra = extraRaw ? JSON.parse(extraRaw) : []
+        const chart = chartRaw ? JSON.parse(chartRaw) : chartSymbol
+        const merged = Array.from(new Set([chart, ...(Array.isArray(extra) ? extra : [])].filter(Boolean)))
+        if (merged.length > 0) return merged
+      }
+    } catch {}
+    return chartSymbol ? [chartSymbol] : ['SA']
+  })
+  const extraSymbols = universe.filter((s) => s !== chartSymbol)
 
   const [stickyDrawerTab, setStickyDrawerTab] = useStickyState<DrawerTab>('drawerTab', 'backtest')
   const tabParam = searchParams.get('tab')
@@ -198,7 +204,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const setChartSymbol = useCallback(
     (symbol: string) => {
       setStickyChartSymbol(symbol)
-      setExtraSymbolsRaw(extraSymbolsRaw.filter((s) => s !== symbol))
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
@@ -209,17 +214,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         { replace: true },
       )
     },
-    [setStickyChartSymbol, extraSymbolsRaw, setExtraSymbolsRaw, setSearchParams],
+    [setStickyChartSymbol, setSearchParams],
   )
 
   const toggleUniverse = useCallback(
     (symbol: string) => {
-      if (symbol === chartSymbol) return
-      setExtraSymbolsRaw(
-        extraSymbolsRaw.includes(symbol) ? extraSymbolsRaw.filter((s) => s !== symbol) : [...extraSymbolsRaw, symbol],
-      )
+      setUniverse((prev) => (prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol]))
     },
-    [chartSymbol, extraSymbolsRaw, setExtraSymbolsRaw],
+    [setUniverse],
   )
 
   const setRunId = useCallback(
@@ -262,10 +264,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     (value: BacktestPrefill, runId?: string) => {
       setBacktestPrefill((p) => ({ seq: (p?.seq ?? 0) + 1, value }))
       if (value.symbols?.[0]) setStickyChartSymbol(value.symbols[0])
-      // Not gated on `.length > 1`: a single-symbol prefill must still
-      // clear a previously wider universe down to just that one symbol,
-      // the same as a multi-symbol prefill replaces it with several.
-      if (value.symbols) setExtraSymbolsRaw(value.symbols.slice(1))
+      if (value.symbols) setUniverse(value.symbols)
       setStickyDrawerTab('backtest')
       setDrawerCollapsed(false)
       // One `setSearchParams` call for every URL field this prefill touches
@@ -288,16 +287,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         { replace: true },
       )
     },
-    [setStickyChartSymbol, setExtraSymbolsRaw, setStickyDrawerTab, setDrawerCollapsed, setSearchParams],
+    [setStickyChartSymbol, setUniverse, setStickyDrawerTab, setDrawerCollapsed, setSearchParams],
   )
 
   const value: WorkspaceState = {
     chartSymbol,
     setChartSymbol,
-    extraSymbols,
-    toggleUniverse,
-    setExtraSymbols: setExtraSymbolsRaw,
     universe,
+    setUniverse,
+    toggleUniverse,
+    extraSymbols,
+    setExtraSymbols: setUniverse,
     runId,
     setRunId,
     drawerTab,
@@ -321,6 +321,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+}
+
+export function useOptionalWorkspace(): WorkspaceState | null {
+  return useContext(WorkspaceContext)
 }
 
 export function useWorkspace(): WorkspaceState {

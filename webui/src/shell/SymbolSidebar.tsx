@@ -27,8 +27,8 @@ function SidebarSkeleton() {
 }
 
 /**
- * The right-hand product panel: search + list (click to chart, double-click
- * to toggle the backtest universe, coverage badges, per-row download/edit)
+ * The right-hand product panel: search + list (click to chart, a checkbox
+ * for the backtest universe, coverage badges, per-row download/edit)
  * on top, bulk data download at the bottom. This absorbs what used to be the
  * standalone Products and Data pages -- coverage comes straight off
  * `Product.coverage` (no separate `/data/coverage` fetch), and "Update
@@ -49,7 +49,8 @@ export function SymbolSidebar() {
   const [activeCode, setActiveCode] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  const { chartSymbol, setChartSymbol, universe, toggleUniverse, setEditingProduct, setSidebarOpen } = useWorkspace()
+  const { chartSymbol, setChartSymbol, universe, setUniverse, toggleUniverse, setEditingProduct, setSidebarOpen } =
+    useWorkspace()
 
   const { data: products, isLoading } = useQuery({ queryKey: ['products'], queryFn: productsApi.list })
 
@@ -113,6 +114,11 @@ export function SymbolSidebar() {
   // something no longer on screen.
   const active = filtered.some((p) => p.code === activeCode) ? activeCode : (filtered[0]?.code ?? null)
 
+  const chartProduct = (code: string) => {
+    setChartSymbol(code)
+    if (window.matchMedia?.('(max-width: 900px)').matches) setSidebarOpen(false)
+  }
+
   const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
@@ -122,11 +128,13 @@ export function SymbolSidebar() {
       setActiveCode(filtered[next].code)
       document.getElementById(`product-row-${filtered[next].code}`)?.scrollIntoView({ block: 'nearest' })
     } else if (e.key === 'Enter' && active) {
-      setChartSymbol(active)
+      chartProduct(active)
     } else if (e.key === 'Escape') {
       // First press clears the filter, second gives the keyboard back to the
       // chart -- Escape on an already-empty box that did nothing would read
-      // as a dead key.
+      // as a dead key. The workspace also closes a narrow overlay on Escape,
+      // so keep this more local interaction from bubbling up to it.
+      e.stopPropagation()
       if (query) setQuery('')
       else searchRef.current?.blur()
     }
@@ -181,11 +189,46 @@ export function SymbolSidebar() {
 
       {/* What the list is currently showing, and how wide the next backtest
           is. Both were previously only countable by eye. */}
-      <div className="sidebar-meta">
-        <span>{t('workspace.productCount', { count: filtered.length })}</span>
-        <div className="spacer" />
-        <span>{t('workspace.universeCount', { count: universe.length })}</span>
-      </div>
+      {(() => {
+        const targetProducts = query ? filtered : (products ?? [])
+        const allTargetSelected =
+          targetProducts.length === 0 || targetProducts.every((p) => universe.includes(p.code))
+        const handleSelectAll = () => {
+          if (targetProducts.length === 0) return
+          if (query) {
+            setUniverse((prev) => Array.from(new Set([...prev, ...filtered.map((p) => p.code)])))
+          } else {
+            setUniverse((products ?? []).map((p) => p.code))
+          }
+        }
+        return (
+          <div className="sidebar-meta">
+            <span>{t('workspace.productCount', { count: filtered.length })}</span>
+            <div className="spacer" />
+            <span>{t('workspace.universeCount', { count: universe.length })}</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost sidebar-action"
+              disabled={allTargetSelected}
+              onClick={handleSelectAll}
+              title={t('common.selectAll')}
+              aria-label={t('common.selectAll')}
+            >
+              {t('common.selectAll')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost sidebar-clear"
+              disabled={universe.length === 0}
+              onClick={() => setUniverse([])}
+              title={t('common.clear')}
+              aria-label={t('common.clear')}
+            >
+              {t('common.clear')}
+            </button>
+          </div>
+        )
+      })()}
 
       <div className="sidebar-list" role="listbox" aria-activedescendant={active ? `product-row-${active}` : undefined}>
         {isLoading && <SidebarSkeleton />}
@@ -196,7 +239,7 @@ export function SymbolSidebar() {
             isCharted={p.code === chartSymbol}
             inUniverse={universe.includes(p.code)}
             isActive={p.code === active && Boolean(query)}
-            onSetChart={() => setChartSymbol(p.code)}
+            onSetChart={() => chartProduct(p.code)}
             onToggleUniverse={() => toggleUniverse(p.code)}
             onEdit={() => setEditingProduct(p.code)}
             onDownload={() => void runUpdate([p.code])}

@@ -25,12 +25,21 @@ export function WorkspaceTopBar({
   onShowAccess: () => void
 }) {
   const { t, i18n } = useTranslation()
-  const { chartSymbol } = useWorkspace()
+  const { chartSymbol, setDrawerTab, setDrawerCollapsed, setSidebarOpen } = useWorkspace()
   const jobs = useJobs()
 
   const activePills = (['backtest', 'data', 'alert'] as const)
     .map((slot) => ({ slot, state: jobs[slot].state }))
     .filter((j) => j.state && ['queued', 'running'].includes(j.state.status))
+
+  const openJob = (slot: 'backtest' | 'data' | 'alert') => {
+    if (slot === 'data') {
+      setSidebarOpen(true)
+      return
+    }
+    setDrawerTab(slot === 'backtest' ? 'backtest' : 'alerts')
+    setDrawerCollapsed(false)
+  }
 
   return (
     <header className="topbar">
@@ -39,7 +48,7 @@ export function WorkspaceTopBar({
           <span className="brand-mark">
             <Icon name="candles" size={15} />
           </span>
-          FuturesView
+          <span className="brand-name">FuturesView</span>
         </span>
 
         {chartSymbol && (
@@ -57,53 +66,64 @@ export function WorkspaceTopBar({
         {/* A job's own panel may be behind a collapsed drawer or a tab that is
             not showing, so this is the one place its progress is always
             visible. The bar carries the number; the label never reflows. */}
-        {activePills.map(({ slot, state }) => (
-          <div key={slot} className="job-pill" title={state!.message}>
-            <span className="job-pill-head">
-              <span className={`badge ${state!.status === 'running' ? 'badge-accent' : 'badge-neutral'}`}>
-                <span className="dot" />
-              </span>
-              {t(SLOT_LABEL_KEY[slot])}
-              <span className="job-pill-pct">{Math.round(state!.progress * 100)}%</span>
-            </span>
-            <span className="progress-bar">
-              <span className="fill" style={{ width: `${Math.round(state!.progress * 100)}%` }} />
-            </span>
-          </div>
-        ))}
-
-        <button
-          className="btn btn-sm btn-ghost btn-icon"
-          onClick={onShowAccess}
-          title={t('auth.access')}
-          aria-label={t('auth.access')}
-        >
-          <Icon name="lock" />
-        </button>
-
-        <button
-          className="btn btn-sm btn-ghost btn-icon"
-          onClick={onShowShortcuts}
-          title={t('workspace.shortcuts')}
-          aria-label={t('workspace.shortcuts')}
-        >
-          <Icon name="keyboard" />
-        </button>
-
-        <ThemeToggle />
-
-        <div className="segmented" role="group" aria-label={t('workspace.language')}>
-          {LANGS.map((l) => (
+        <div className="topbar-jobs">
+          {activePills.map(({ slot, state }) => (
             <button
-              key={l.code}
               type="button"
-              className={`segmented-btn ${i18n.resolvedLanguage === l.code ? 'active' : ''}`}
-              aria-pressed={i18n.resolvedLanguage === l.code}
-              onClick={() => void i18n.changeLanguage(l.code)}
+              key={slot}
+              className="job-pill"
+              title={state!.message}
+              aria-label={`${t(SLOT_LABEL_KEY[slot])} ${Math.round(state!.progress * 100)}%`}
+              onClick={() => openJob(slot)}
             >
-              {l.label}
+              <span className="job-pill-head">
+                <span className={`badge ${state!.status === 'running' ? 'badge-accent' : 'badge-neutral'}`}>
+                  <span className="dot" />
+                </span>
+                {t(SLOT_LABEL_KEY[slot])}
+                <span className="job-pill-pct">{Math.round(state!.progress * 100)}%</span>
+              </span>
+              <span className="progress-bar">
+                <span className="fill" style={{ width: `${Math.round(state!.progress * 100)}%` }} />
+              </span>
             </button>
           ))}
+        </div>
+
+        <div className="topbar-actions">
+          <button
+            className="btn btn-sm btn-ghost btn-icon"
+            onClick={onShowAccess}
+            title={t('auth.access')}
+            aria-label={t('auth.access')}
+          >
+            <Icon name="lock" />
+          </button>
+
+          <button
+            className="btn btn-sm btn-ghost btn-icon"
+            onClick={onShowShortcuts}
+            title={t('workspace.shortcuts')}
+            aria-label={t('workspace.shortcuts')}
+          >
+            <Icon name="keyboard" />
+          </button>
+
+          <ThemeToggle />
+
+          <div className="segmented" role="group" aria-label={t('workspace.language')}>
+            {LANGS.map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                className={`segmented-btn ${i18n.resolvedLanguage === l.code ? 'active' : ''}`}
+                aria-pressed={i18n.resolvedLanguage === l.code}
+                onClick={() => void i18n.changeLanguage(l.code)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </header>

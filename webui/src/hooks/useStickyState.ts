@@ -26,15 +26,18 @@ const PREFIX = 'ft.'
  * gets `initial` and the page renders -- a remembered form field is never
  * worth a blank screen.
  */
-export function useStickyState<T>(key: string, initial: T, override?: T): [T, (value: T) => void] {
+export function useStickyState<T>(
+  key: string,
+  initial: T | (() => T),
+  override?: T,
+): [T, (value: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState<T>(() => {
     if (override !== undefined) return override
     try {
       const raw = localStorage.getItem(PREFIX + key)
-      return raw === null ? initial : (JSON.parse(raw) as T)
-    } catch {
-      return initial
-    }
+      if (raw !== null) return JSON.parse(raw) as T
+    } catch {}
+    return typeof initial === 'function' ? (initial as () => T)() : initial
   })
 
   useEffect(() => {

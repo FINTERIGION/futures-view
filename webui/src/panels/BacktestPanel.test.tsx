@@ -65,6 +65,34 @@ describe('prefill from a past run', () => {
   })
 })
 
+describe('the run universe', () => {
+  it('removes product chips independently from the charted product', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('ft.extraSymbols', JSON.stringify(['CF']))
+    renderPanel()
+
+    const removeCF = await screen.findByRole('button', { name: 'Remove CF from the universe' })
+    const removeSA = screen.getByRole('button', { name: 'Remove SA from the universe' })
+    expect(screen.getByText('2 products selected')).toBeInTheDocument()
+
+    await user.click(removeCF)
+    expect(screen.queryByRole('button', { name: 'Remove CF from the universe' })).not.toBeInTheDocument()
+    expect(screen.getByText('1 product selected')).toBeInTheDocument()
+
+    await user.click(removeSA)
+    expect(screen.queryByRole('button', { name: 'Remove SA from the universe' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('No products').length).toBeGreaterThan(0)
+  })
+
+  it('explains that a run needs products rather than only disabling the button', async () => {
+    localStorage.setItem('ft.universe', JSON.stringify([]))
+    renderWorkspace(<BacktestPanel />, { path: '/' })
+    await screen.findByRole('option', { name: 'double_ma' })
+    expect(screen.getByRole('button', { name: 'Run Backtest' })).toBeDisabled()
+    expect(screen.getAllByText('No products').length).toBeGreaterThan(0)
+  })
+})
+
 describe('strategy parameters', () => {
   it('offers only the params in `space`, and does not send the rest', async () => {
     // `lots` is declared but left out of `space`: it runs at its default,
@@ -250,6 +278,7 @@ describe('a strategy whose file failed to load', () => {
 
     await screen.findByText(/was never closed/)
     expect(screen.getByRole('button', { name: /run backtest/i })).toBeDisabled()
+    expect(screen.getByText('Select a runnable strategy first.')).toBeInTheDocument()
   })
 })
 

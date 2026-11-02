@@ -4,9 +4,9 @@ import { useJobSlot } from '../shell/JobsProvider'
 import { useWorkspace } from '../shell/WorkspaceContext'
 import { IndicatorPicker } from './IndicatorPicker'
 
-export function ChartToolbar({ productName }: { productName?: string }) {
+export function ChartToolbar() {
   const { t } = useTranslation()
-  const { chartSymbol, runId, setRunId } = useWorkspace()
+  const { runId, setRunId } = useWorkspace()
   const job = useJobSlot('backtest')
 
   /** Leave the backtest view entirely: the run comes off the chart, and the
@@ -24,12 +24,6 @@ export function ChartToolbar({ productName }: { productName?: string }) {
 
   return (
     <div className="chart-toolbar">
-      {chartSymbol && (
-        <span className="chart-symbol-title">
-          <strong>{chartSymbol}</strong>
-          {productName && <span className="chart-symbol-name">{productName}</span>}
-        </span>
-      )}
       <div className="spacer" />
       {/* Volume used to be a toolbar button of its own, next to this picker.
           It is a tick inside the picker now: from the reader's side it is one

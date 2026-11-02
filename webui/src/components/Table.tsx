@@ -69,6 +69,14 @@ export function Table<T>({
                 <tr
                   className={rowClassName?.(row)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={(e) => {
+                    if (!onRowClick || e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onRowClick(row)
+                    }
+                  }}
                   style={onRowClick ? { cursor: 'pointer' } : undefined}
                 >
                   {columns.map((col) => (
