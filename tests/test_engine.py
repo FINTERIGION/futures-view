@@ -1136,3 +1136,44 @@ def test_cancelling_a_spec_takes_its_resting_order_with_it():
     eng.stop_spec.pop('SA')            # the spec is the source of truth
     eng._open_phase(1, datetime.date(2024, 1, 2))
     assert 'SA' not in eng.live_stop
+
+
+def test_extreme_includes_entry_bar_and_shifts_across_a_roll():
+    """`ctx.extreme` records the entry bar's high/low after `INTRABAR` and
+    shifts by the realized roll basis alongside `ctx.stop_price`."""
+    n = 4
+    old = {
+        0: (100.0, 102.0, 99.0, 100.0, 100.0, 0, 10),
+        1: (100.0, 112.0, 98.0, 108.0, 108.0, 0, 10),   # entry bar: high reaches 112
+        2: (108.0, 110.0, 105.0, 107.0, 107.0, 0, 10),  # roll bar: old opens at 108
+    }
+    new = {
+        2: (128.0, 131.0, 126.0, 129.0, 129.0, 0, 10),  # new opens at 128 (+20 basis), high 131
+        3: (129.0, 130.0, 127.0, 128.0, 128.0, 0, 10),  # quieter bar: extreme stays 132 (112 + 20)
+    }
+    panel = build_panel(
+        'SA', n, weighted={'session': [1.0] * n},
+        contracts={'SA505': old, 'SA509': new},
+        contract_by_bar=['SA505', 'SA505', 'SA509', 'SA509'],
+    )
+    seen = {}
+
+    class _TrailProbe(Strategy):
+        def on_bar(self, ctx):
+            if ctx.i == 0:
+                ctx.set_target('SA', 1)
+                ctx.set_stop('SA', distance=5.0)
+                return
+            seen[ctx.i] = (ctx.extreme('SA'), ctx.stop_price('SA'))
+            ctx.set_stop('SA', price=ctx.stop_price('SA'))
+
+    eng = Engine(build_market({'SA': panel}, n), _TrailProbe(), initial_cash=100_000.0)
+    eng.run_backtest(SetupContext, BarContext)
+
+    # Bar 1 (entry bar): filled @100, entry-bar high of 112 is already in `extreme`,
+    # and the distance=5 stop is already resolved to 95.
+    assert seen[1] == (pytest.approx(112.0), pytest.approx(95.0))
+    # Bar 2 (roll bar, +20 basis): 112 shifts to 132 (> bar 2's high of 131), stop 95 shifts to 115.
+    assert seen[2] == (pytest.approx(132.0), pytest.approx(115.0))
+    assert seen[3] == (pytest.approx(132.0), pytest.approx(115.0))
+

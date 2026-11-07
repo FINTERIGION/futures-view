@@ -70,6 +70,8 @@ Handed to `on_bar`, after INTRABAR and before SETTLE:
 | `ctx.set_target(sym, lots)` | Target-position order; flips side in one order |
 | `ctx.buy/sell(sym, lots)` / `ctx.close(sym)` | Delta orders / flatten |
 | `ctx.set_stop(sym, price=…, distance=…)` / `ctx.cancel_stop(sym)` | Protective stop, armed at the next open |
+| `ctx.stop_price(sym)` | Currently resting stop price on the held contract, or `None` |
+| `ctx.extreme(sym)` | Best price reached on the held contract since entry (entry bar included, roll-adjusted), or `None` when flat |
 | `ctx.set_take_profit(sym, price=…, distance=…)` / `ctx.cancel_take_profit(sym)` | Target that closes the position when touched intrabar; OCO with the stop |
 | `ctx.size_for_risk(sym, stop_distance, risk_pct)` | Lots sized so a stop-out risks `risk_pct` of equity; `0` when the budget will not stretch to one lot |
 

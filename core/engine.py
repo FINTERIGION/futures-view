@@ -87,6 +87,10 @@ class Engine:
         # it arms: the trade that level was named for. See ``_price_level_spent``.
         self.stop_owner: Dict[str, tuple] = {}
         self.tp_owner: Dict[str, tuple] = {}
+        # ``{'trade_id': id, 'price': ext}`` for each open position: the best
+        # price reached on the execution contract since entry, shifted by the
+        # roll basis alongside the brackets.
+        self.trade_extreme: Dict[str, dict] = {}
 
         self.indicators: Dict[tuple, "object"] = {}
         # Warmup is tracked per product, not once for the whole universe: a
@@ -361,6 +365,9 @@ class Engine:
             if spec is not None and 'price' in spec:
                 spec['price'] = float(spec['price']) + basis
             live.pop(sym, None)   # re-armed against the new leg in `_arm_brackets`
+        ext = self.trade_extreme.get(sym)
+        if ext is not None:
+            ext['price'] = float(ext['price']) + basis
 
     def _fill_signal(self, sym: str, i: int, date: Date, size: int) -> bool:
         """Fill ``size`` at this bar's open; False if there was no price to fill on.
@@ -505,6 +512,7 @@ class Engine:
                 # stale orders from a position that's since closed
                 self.live_stop.pop(sym, None)
                 self.live_tp.pop(sym, None)
+                self.trade_extreme.pop(sym, None)
                 # ...and any price level that position armed. Only a spec
                 # already bound to a trade is dropped; one set while flat is
                 # still waiting for its entry.
@@ -519,6 +527,10 @@ class Engine:
             if contract is None:
                 continue
             trade = self.ledger.open_trade_id(sym)
+            ext = self.trade_extreme.get(sym)
+            if ext is None or ext.get('trade_id') != trade:
+                avg_entry = self.broker.positions[(sym, contract)].avg_entry
+                self.trade_extreme[sym] = {'trade_id': trade, 'price': float(avg_entry)}
             for spec_by_sym, live, owner, sign in (
                 (self.stop_spec, self.live_stop, self.stop_owner, -1),
                 (self.tp_spec, self.live_tp, self.tp_owner, +1),
@@ -642,6 +654,24 @@ class Engine:
             self.live_tp.pop(sym, None)
             self.tp_spec.pop(sym, None)
             self.tp_owner.pop(sym, None)
+            self.trade_extreme.pop(sym, None)
+
+        # Update each surviving position's extreme since entry with today's
+        # session high (long) or low (short) on the held contract -- including
+        # the entry bar itself, after its initial bracket check has run.
+        for sym, ext in list(self.trade_extreme.items()):
+            contract = self._current_contract(sym)
+            pos = self.broker.positions.get((sym, contract)) if contract else None
+            if pos is None or pos.size == 0:
+                self.trade_extreme.pop(sym, None)
+                continue
+            row = self._row_for(sym, contract, i)
+            if row is None:
+                continue
+            if pos.size > 0:
+                ext['price'] = max(ext['price'], float(row[1]))
+            else:
+                ext['price'] = min(ext['price'], float(row[2]))
 
     # ------------------------------------------------------------------
     # SIGNAL phase
@@ -701,6 +731,7 @@ class Engine:
             )
             for f in liq_fills:
                 self.ledger.process_fill(f)
+            self.trade_extreme.clear()
             equity, margin_used, available = self.broker.mark_to_market(lookup)
 
         # Insolvent even after the forced liquidation had its chance. Every bar

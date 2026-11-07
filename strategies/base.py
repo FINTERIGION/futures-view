@@ -286,6 +286,28 @@ class BarContext:
         self._engine.stop_spec.pop(sym, None)
         self._engine.live_stop.pop(sym, None)
 
+    def stop_price(self, sym: str) -> Optional[float]:
+        """Price of ``sym``'s currently resting stop on the held contract, or None.
+
+        Already resolved from a ``distance`` spec on the first bar after entry
+        and shifted by the realized roll basis across every roll, so a trailing
+        stop can tighten against it directly without tracking contract codes or
+        roll basis in strategy state.
+        """
+        live = self._engine.live_stop.get(sym)
+        return float(live['price']) if live is not None else None
+
+    def extreme(self, sym: str) -> Optional[float]:
+        """Best price ``sym``'s open trade has reached since entry, or None when flat.
+
+        Highest high for a long, lowest low for a short, measured on the
+        execution contract (seeded from ``avg_entry`` at the fill and updated
+        each session after ``INTRABAR``, entry bar included) and shifted by the
+        realized roll basis whenever the position rolls.
+        """
+        ext = self._engine.trade_extreme.get(sym)
+        return float(ext['price']) if ext is not None else None
+
     def set_take_profit(self, sym: str, price: Optional[float] = None, distance: Optional[float] = None) -> None:
         """Target that closes the whole position when touched intrabar.
 
