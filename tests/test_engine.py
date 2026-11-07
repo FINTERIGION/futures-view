@@ -778,6 +778,29 @@ def test_a_forced_liquidation_pays_slippage():
     assert trade['close_price'] == pytest.approx(13_990.0)
 
 
+def test_a_forced_liquidation_clears_resting_brackets_and_price_specs():
+    """When SETTLE force-liquidates a position, its resting stop/take-profit
+    and any trade-bound price spec must be cleared immediately so end-of-bar
+    snapshots (and subsequent bars) do not see stale brackets on a flat book."""
+    eng = _cf_engine(10_000.0, n_bars=2, closes={1: 14_000.0})
+    eng.pending['CF'] = 1
+    eng.stop_spec['CF'] = {'price': 13_500.0}
+    eng.tp_spec['CF'] = {'price': 16_000.0}
+    eng._open_phase(0, datetime.date(2024, 1, 1))
+    eng._settle_phase(0, datetime.date(2024, 1, 1))
+    assert 'CF' in eng.live_stop
+    assert 'CF' in eng.live_tp
+
+    eng._settle_phase(1, datetime.date(2024, 1, 2))    # settles at 14,000: margin call
+    assert eng.broker.positions == {}
+    assert eng.live_stop == {}
+    assert eng.live_tp == {}
+    assert 'CF' not in eng.stop_spec
+    assert 'CF' not in eng.tp_spec
+    assert 'CF' not in eng.stop_owner
+    assert 'CF' not in eng.tp_owner
+
+
 # --------------------------------------------------------------------------
 # Margin rejection and blow-up
 # --------------------------------------------------------------------------

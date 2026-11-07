@@ -40,10 +40,6 @@ interface WorkspaceState {
   /** Check or uncheck a symbol into the universe. */
   toggleUniverse: (symbol: string) => void
 
-  /** Products in the universe (alias kept for compatibility). */
-  extraSymbols: string[]
-  setExtraSymbols: (symbols: string[] | ((prev: string[]) => string[])) => void
-
   /** The backtest run currently overlaid on the chart. URL-only
    * (no sticky fallback): a run id a week old is more likely to 404 (see
    * `RUN_RETENTION`) than to still be the one worth reopening, and a stale
@@ -138,7 +134,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } catch {}
     return chartSymbol ? [chartSymbol] : ['SA']
   })
-  const extraSymbols = universe.filter((s) => s !== chartSymbol)
 
   const [stickyDrawerTab, setStickyDrawerTab] = useStickyState<DrawerTab>('drawerTab', 'backtest')
   const tabParam = searchParams.get('tab')
@@ -296,8 +291,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     universe,
     setUniverse,
     toggleUniverse,
-    extraSymbols,
-    setExtraSymbols: setUniverse,
     runId,
     setRunId,
     drawerTab,

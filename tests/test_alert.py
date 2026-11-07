@@ -207,3 +207,36 @@ def test_empty_strategy_is_flat_with_the_calendar_contract():
     assert row['stop'] == {'price': None, 'distance': None}
     assert row['take_profit'] == {'price': None, 'distance': None}
     _assert_no_lots(snap)
+
+
+def test_flat_or_closing_after_a_prior_trade_does_not_leak_sticky_distance_specs():
+    """A distance spec stays in ``engine.stop_spec`` across trades so the
+    strategy does not have to re-declare it on every entry. Once the position
+    is flat (or queued to close at the next open), the alert snapshot must not
+    report that dormant rule as an active ``next open ±d`` bracket."""
+    class _EnterThenExit(Strategy):
+        def __init__(self, exit_bar, **kwargs):
+            super().__init__(**kwargs)
+            self.exit_bar = exit_bar
+
+        def setup(self, ctx):
+            pass
+
+        def on_bar(self, ctx):
+            if ctx.i == 0:
+                ctx.set_target('SA', 1)
+                ctx.set_stop('SA', distance=5.0)
+                ctx.set_take_profit('SA', distance=10.0)
+            elif ctx.i == self.exit_bar:
+                ctx.set_target('SA', 0)
+
+    # Bar 1 queues the close (operation == 'close'); Bar 2 has already filled it (operation == 'flat').
+    closing = _row(run_alert_snapshot(_flat_market(2), _EnterThenExit, {'exit_bar': 1}))
+    assert closing['operation'] == 'close'
+    assert closing['stop'] == {'price': None, 'distance': None}
+    assert closing['take_profit'] == {'price': None, 'distance': None}
+
+    flat_after = _row(run_alert_snapshot(_flat_market(3), _EnterThenExit, {'exit_bar': 1}))
+    assert flat_after['operation'] == 'flat'
+    assert flat_after['stop'] == {'price': None, 'distance': None}
+    assert flat_after['take_profit'] == {'price': None, 'distance': None}

@@ -113,12 +113,20 @@ def _snapshot_from_engine(engine: Engine) -> dict:
     for sym in engine.symbols:
         position = engine.broker.net_position(sym)
         pending = engine.pending.get(sym, 0) + engine.deferred.get(sym, 0)
+        operation = classify_operation(position, pending)
+        has_exposure = (position + pending) != 0
         rows.append({
             'symbol': sym,
             'contract': _trading_contract(engine, sym, last_i),
-            'operation': classify_operation(position, pending),
-            'stop': _bracket_level(engine.live_stop.get(sym), engine.stop_spec.get(sym)),
-            'take_profit': _bracket_level(engine.live_tp.get(sym), engine.tp_spec.get(sym)),
+            'operation': operation,
+            'stop': (
+                _bracket_level(engine.live_stop.get(sym), engine.stop_spec.get(sym))
+                if has_exposure else {'price': None, 'distance': None}
+            ),
+            'take_profit': (
+                _bracket_level(engine.live_tp.get(sym), engine.tp_spec.get(sym))
+                if has_exposure else {'price': None, 'distance': None}
+            ),
         })
     return {
         'asof': asof.isoformat() if asof is not None else None,

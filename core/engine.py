@@ -732,6 +732,16 @@ class Engine:
             for f in liq_fills:
                 self.ledger.process_fill(f)
             self.trade_extreme.clear()
+            self.live_stop.clear()
+            self.live_tp.clear()
+            for f in liq_fills:
+                sym = f.symbol
+                for spec_by_sym, owner in ((self.stop_spec, self.stop_owner),
+                                           (self.tp_spec, self.tp_owner)):
+                    spec = spec_by_sym.get(sym)
+                    if spec is not None and 'price' in spec:
+                        del spec_by_sym[sym]
+                        owner.pop(sym, None)
             equity, margin_used, available = self.broker.mark_to_market(lookup)
 
         # Insolvent even after the forced liquidation had its chance. Every bar

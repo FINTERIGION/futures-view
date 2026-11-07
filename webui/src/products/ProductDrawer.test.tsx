@@ -1,9 +1,11 @@
+import { useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { productsApi } from '../api/endpoints'
-import { JobsProvider } from '../shell/JobsProvider'
+import { JobsProvider, useJobSlot } from '../shell/JobsProvider'
+import { MockEventSource } from '../test/setup'
 import { ProductDrawer } from './ProductDrawer'
 
 vi.mock('../api/endpoints', () => ({
@@ -109,5 +111,31 @@ describe('rate display', () => {
     expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['products'] }))
     expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['product', 'SA'] }))
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('locks Save and Delete while an alert preview job is running', async () => {
+    vi.mocked(productsApi.get).mockResolvedValue(product(0.125, 0.0001) as never)
+    function StartAlertJob() {
+      const { start } = useJobSlot('alert')
+      useEffect(() => {
+        start('alert-1')
+      }, [start])
+      return null
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+    render(
+      <QueryClientProvider client={client}>
+        <JobsProvider>
+          <StartAlertJob />
+          <ProductDrawer code="SA" onClose={vi.fn()} />
+        </JobsProvider>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('button', { name: 'Save' })
+    act(() => {
+      MockEventSource.instances[0]?.emit({ type: 'state', id: 'alert-1', kind: 'alert', status: 'running', progress: 0.5 })
+    })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
   })
 })

@@ -294,10 +294,11 @@ export function AlertPanel() {
     const state = job.state
     const tracked = state && inflight?.jobId === state.id ? inflight : null
     if (!tracked) return
+    const bump = () => queueMicrotask(() => setCacheRev((n) => n + 1))
     if (job.lost) {
       previewErrors.set(tracked.cacheKey, t('jobs.lost'))
       inflight = null
-      setCacheRev((n) => n + 1)
+      bump()
       return
     }
     if (state?.status === 'done' && isAlertSnapshot(state.result)) {
@@ -305,32 +306,34 @@ export function AlertPanel() {
       previewErrors.delete(tracked.cacheKey)
       stalePreviews.delete(tracked.cacheKey)
       inflight = null
-      setCacheRev((n) => n + 1)
+      bump()
     } else if (state?.status === 'done' && 'result' in state) {
       // SSE terminal frames deliberately omit `result`; useJob follows them
       // with a GET that carries it. Only a completed response with an invalid
       // result is a failure -- the frame in between must keep the queue held.
       previewErrors.set(tracked.cacheKey, t('alerts.previewFailed'))
       inflight = null
-      setCacheRev((n) => n + 1)
+      bump()
     } else if (state?.status === 'error' || state?.status === 'cancelled') {
       if (state.status !== 'cancelled') previewErrors.set(tracked.cacheKey, state.error ?? t('alerts.previewFailed'))
       inflight = null
-      setCacheRev((n) => n + 1)
+      bump()
     }
   }, [job.state, job.lost, t])
 
   useEffect(() => {
     if (starting || job.isActive || inflight) return
     if (pendingIds.length === 0) {
-      if (batchTotal > 0) setBatchTotal(0)
+      if (batchTotal > 0) queueMicrotask(() => setBatchTotal(0))
       return
     }
     const [nextId, ...rest] = pendingIds
     pendingRef.current = rest
-    setPendingIds(rest)
-    const entry = entriesRef.current.find((e) => e.id === nextId)
-    if (entry) void startPreview(entry, batchTotal > 0)
+    queueMicrotask(() => {
+      setPendingIds(rest)
+      const entry = entriesRef.current.find((e) => e.id === nextId)
+      if (entry) void startPreview(entry, batchTotal > 0)
+    })
   }, [job.isActive, pendingIds, batchTotal, cacheRev, startPreview])
 
   const announcedDataJob = useRef<string | null>(null)
@@ -339,7 +342,7 @@ export function AlertPanel() {
     if (state?.status !== 'done' || announcedDataJob.current === state.id) return
     announcedDataJob.current = state.id
     for (const key of previewCache.keys()) stalePreviews.add(key)
-    setCacheRev((n) => n + 1)
+    queueMicrotask(() => setCacheRev((n) => n + 1))
   }, [dataJob.state])
 
   let draft = paramDraft

@@ -171,7 +171,7 @@ export function useProductForm(code: string | null, onClose: () => void): Produc
   const jobs = useJobs()
   const queryClient = useQueryClient()
   const workspace = useOptionalWorkspace()
-  const lockedByJob = jobs.backtest.isActive || jobs.data.isActive
+  const lockedByJob = jobs.backtest.isActive || jobs.data.isActive || jobs.alert.isActive
 
   const { data: exchangeMeta } = useQuery({ queryKey: ['meta', 'exchanges'], queryFn: productsApi.exchanges })
   const { data: product } = useQuery({
