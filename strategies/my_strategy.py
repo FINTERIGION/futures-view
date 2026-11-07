@@ -35,6 +35,8 @@ class MyStrategy(Strategy):
       ctx.buy(sym, lots) / sell(sym, lots) / close(sym)
       ctx.set_stop(sym, price=...) or set_stop(sym, distance=...) / cancel_stop(sym)
       ctx.set_take_profit(sym, price=...) or (sym, distance=...) / cancel_take_profit(sym)
+      ctx.stop_price(sym)           active stop price, or None
+      ctx.extreme(sym)              favorable extreme since entry (highest high / lowest low), or None
       ctx.size_for_risk(sym, stop_distance, risk_pct)
 
     Multi-product sketch (one independent signal per product)::

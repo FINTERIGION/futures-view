@@ -1,90 +1,74 @@
-# Backtesting — `main.py backtest`
+# Backtesting
 
-Runs one strategy over a date range and writes a trade log, five charts and a metrics summary.
+Runs a strategy over historical data using a four-phase daily execution loop and outputs a trade log, performance metrics, and charts.
+
+## CLI
 
 ```bash
 python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --strategy double_ma --cash 100000
 ```
 
-## Flags
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--symbols` | `str...` | `SA FG CF C` | Products to load |
+| `--start` / `--end` | `YYYY-MM-DD` | `2020-01-01` / `2026-12-31` | Backtest date window |
+| `--cash` | `float > 0` | `100000` | Initial account equity (CNY) |
+| `--strategy` | `str` | `double_ma` | Discovered short name or `module.path:ClassName` |
+| `--slippage` | `float >= 0` | `0` | Slippage in ticks (`slippage * tick_size` per fill) |
+| `--lots` | `int` | `1` | Override `params['lots']` |
+| `--param` | `NAME=VALUE` | — | Override strategy parameter (repeatable; casts `int` → `float` → `bool` → `str`) |
+| `--update-data` | `flag` | `False` | Run data sync before backtest |
+| `--results-dir` | `path` | `results/` | Output directory |
+| `--keep-last` | `int` | `None` | Retain only the `N` most recent run outputs |
+| `--quiet` / `--verbose` | `flag` | `INFO` | Set log level to `WARNING` / `DEBUG` |
 
-| Flag | Meaning | Default |
-| --- | --- | --- |
-| `--symbols` | Products to load (weighted + contract data) | `SA FG CF C` |
-| `--start` / `--end` | Backtest window, `YYYY-MM-DD` | `2020-01-01` / `2026-12-31` |
-| `--cash` | Initial equity (CNY); must be greater than 0 | `100000` |
-| `--strategy` | A discovered short name (`--help` lists them), or a `module.path:ClassName` reference to a strategy outside this repo | `double_ma` |
-| `--slippage` | Fill slippage in ticks, applied against the order; must be greater than or equal to 0 | `0` |
-| `--lots` | Lots per trade, for strategies that expose it | `1` |
-| `--param NAME=VALUE` | Override one param; repeatable | — |
-| `--update-data` | Refresh exchange data before running | off |
-| `--results-dir` | Output directory | `results/` |
-| `--keep-last N` | Delete result files from all but the N most recent runs | off |
-| `--quiet` / `--verbose` | Log level | info |
+## Execution Model
 
-## Execution model
+Signals compute on `{SYMBOL}_weighted.csv`; orders fill on `{SYMBOL}.csv` against the calendar main contract. Each trading day executes four phases in order:
 
-The day loop has four phases: **OPEN → INTRABAR → SIGNAL → SETTLE**.
-
-| Phase | What happens |
+| Phase | Operations |
 | --- | --- |
-| OPEN | Rolls to the new calendar contract if the map changed, fills orders queued yesterday at today's open (± slippage) **subject to the margin check below**, arms the protective bracket (stop and take-profit) |
-| INTRABAR | Bracket exits, checked against today's high/low; a level the open already gapped past fills at the open, not at the level. When one bar touches both, the **stop** wins. A stop fill pays slippage; a take-profit does not |
-| SIGNAL | `on_bar` runs; orders are queued, never filled on the bar that produced them |
-| SETTLE | Mark to market on settlement prices; if available margin goes negative, all positions are force-liquidated that day at the settle mark (± slippage); if equity is still ≤ 0 after that, the account is blown up and the run stops |
+| `OPEN` | 1. Roll open position if calendar contract changed.<br>2. Fill yesterday's queued orders at today's open (± slippage) after margin check.<br>3. Arm or update resting stop / take-profit levels. |
+| `INTRABAR` | Check armed stop and take-profit against contract `high` / `low`:<br>- Gap past level at open fills at open.<br>- If both hit on the same bar, **stop** wins.<br>- Stop pays slippage; take-profit fills as a limit order (no slippage). |
+| `SIGNAL` | Run `strategy.on_bar(ctx)`. Orders queued here never fill on the current bar. |
+| `SETTLE` | Mark positions to settlement price. If `available < 0`, force-liquidate all positions at settle (± slippage). If `equity <= 0` after liquidation, set `blown_up = True` and terminate run. |
 
-Signals are computed on the OI-weighted series; fills happen on the calendar main contract for that date. A strategy never names a physical contract, and never handles a roll itself.
+## Engine Rules
 
-### Rolls
+### Contract Rolls
+- **Single-leg invariant**: Each product holds at most one contract at a time. Rolling closes the old contract and opens the new contract at their respective open prices.
+- **Dark old contract (still active)**: Roll defers until the old contract prints a session; queued orders remain targeted at the old leg and defer with it.
+- **Dark old contract (expired/delisted)**: Position closes at its last carried settlement mark, opens on the new contract at open, and increments `stranded_rolls`.
+- **Bracket re-anchoring**: `distance` specs re-resolve from the new leg's `avg_entry`; `price` specs shift by the realized roll basis.
 
-**A product holds exactly one contract at a time.** When the calendar moves, the whole position is closed on the leg it is held on and reopened on the new one, at each contract's own open. If the old leg did not print that day there is no exit price, and what happens next depends on whether one is still coming:
-
-- **Still trading** — an ordinary dark day. The roll waits, and orders queued meanwhile stay on the old leg rather than opening a second one on the calendar contract. With the old leg dark they simply defer, exactly as they would on any other dark bar.
-- **Finished printing** — expired, or delisted mid-run. Waiting is waiting forever, so the leg is closed at its carried mark and the exposure moves on. That fill is at a price nobody traded, so the run warns about it and counts it in `stranded_rolls`. A non-zero count usually means the product's `main_months` no longer match where the liquidity is, and the calendar is holding contracts to the end of their life.
-
-**The bracket is re-anchored on the new contract's price scale.** A `distance` is re-resolved against the new leg's `avg_entry`, so the basis cancels. An explicit `price` is shifted by the basis the roll realized, spec included, since the resting order is re-armed from the spec on the new contract. This is the reason strategies are pointed at distances.
-
-Costs come from `datafeed/products.py` per product: multiplier, margin ratio, and either `commission_rate` (fraction of notional) or `commission_per_lot`. Long and short are accounted symmetrically.
-
-### Capital limits
-
-Two guards keep a run from trading capital it does not have.
-
-**Orders are checked before they fill.** At OPEN, an order that would raise the margin requirement past what equity covers is **rejected**. The strategy is free to signal the same position again next bar; nothing replays it on its behalf, because a replayed order would open at a price no signal chose. Orders that do *not* raise the requirement — closes, reductions, flips into a cheaper leg — always pass, so a rejection can never trap a position inside a margin call. Rolls and forced liquidations skip the check entirely: a roll is the same exposure on a different contract, and a liquidation is the remedy for insolvency.
-
-The run reports how many orders it refused. A non-zero count means the metrics describe a **smaller book than the strategy asked for** — raise `--cash` or cut the universe before reading them as the strategy's performance.
-
-**A blown-up account stops the run.** If equity is still ≤ 0 at SETTLE after the forced liquidation has had its chance, the remaining bars are not traded: every one of them would be a position opened on capital that no longer exists. The summary says so above the numbers, and the metrics then cover only the truncated window.
-
-`--slippage` is quoted in **ticks**, not price points: each fill is moved against the order by `slippage × tick_size`, with `tick_size` read per product from the same registry. One setting therefore means the same thing across the universe — `--slippage 1` is one minimum price increment on gold (0.02) and on copper (10) alike.
-
-Every market-style fill pays it: orders at the open, both legs of a roll, a triggered stop (at its level or at a gapped open), and a forced liquidation (at the settle mark). The one exception is a take-profit, which rests at its level like a limit order and fills there, or at a better gapped open, unslipped.
+### Margin & Capital Guards
+- **Pre-fill margin check**: At `OPEN`, orders that increase margin requirements beyond current equity are rejected (`n_rejected_orders` increments; orders are not replayed). Risk-reducing orders (closes, partial reductions, flips to lower-margin exposure), rolls, and forced liquidations bypass this check.
+- **Account blow-up**: If `equity <= 0` after `SETTLE` forced liquidation, remaining bars are skipped and `blown_up = True`.
+- **Slippage**: Applied as `slippage * tick_size` against market-style fills (open orders, both legs of a roll, triggered stops, forced liquidations). Take-profit fills are unslipped.
 
 ## Outputs
 
-Written to `--results-dir`, timestamped per run:
+Saved to `--results-dir` with timestamp `<ts>` (`YYYYMMDD_HHMMSS`):
 
-| File | Content |
+| File | Description |
 | --- | --- |
-| `<Strategy>_trades_<ts>.csv` | One row per closed logical trade |
-| `<Strategy>_equity_<ts>.png` | Equity curve |
-| `<Strategy>_returns_<ts>.png` | Return curve |
-| `<Strategy>_position_<ts>.png` | Position over time |
-| `<Strategy>_signals_<ts>.png` | Price with entry/exit markers |
+| `<Strategy>_trades_<ts>.csv` | Closed logical trades (rolls folded into the parent trade) |
+| `<Strategy>_equity_<ts>.png` | Equity and drawdown curve |
+| `<Strategy>_returns_<ts>.png` | Cumulative return curve |
+| `<Strategy>_position_<ts>.png` | Net position exposure over time |
+| `<Strategy>_signals_<ts>.png` | Price series with entry/exit markers |
 | `<Strategy>_summary_<ts>.png` | Metrics summary panel |
 
-Trade log columns: `trade_id`, `open_date`, `close_date`, `direction`,
-`symbol`, `contract`, `contracts`, `n_rolls`, `open_price`, `close_price`,
-`size`, `gross_pnl`, `commission`, `net_pnl`, `margin_used`, `open_at_end`,
-`forced`, `open_bar`, `close_bar`.
+### Trade Log Columns (`TRADE_LOG_FIELDS`)
+`trade_id`, `open_date`, `close_date`, `direction`, `symbol`, `contract`, `contracts`, `n_rolls`, `open_price`, `close_price`, `size`, `gross_pnl`, `commission`, `net_pnl`, `margin_used`, `open_at_end`, `forced`, `exit_reason`, `open_bar`, `close_bar`.
 
-## Metrics
+## Metrics (`core.metrics.compute_metrics`)
 
-Printed at the end of a run and rendered into the summary chart:
-
-- **Returns** — total, annualized, annualized volatility
-- **Risk-adjusted** — Sharpe, Sortino, Calmar (risk-free 3% by default)
-- **Drawdown** — max drawdown and days to recover it
-- **Trades** — count, win rate, profit/loss ratio, profit factor, expectancy, average win / loss / holding days
-- **Capital** — turnover, capital exposure, forced-liquidation count, rejected-order count, blow-up flag
-- **Per symbol** — the same trade statistics broken out by product
+| Category | Keys |
+| --- | --- |
+| **Account & Returns** | `initial_cash`, `final_equity`, `total_return` (%), `annualized_return` (%), `annualized_volatility` (%) |
+| **Risk-Adjusted** | `sharpe_ratio`, `sortino_ratio`, `calmar_ratio` (excess over `DEFAULT_RISK_FREE_RATE = 0.03`, annualized by actual bars/year) |
+| **Drawdown** | `max_drawdown` (%), `max_drawdown_recovery_days` (`int \| None`) |
+| **Trades** | `n_trades`, `n_winning`, `n_losing`, `win_rate` (%), `profit_loss_ratio`, `profit_factor`, `expectancy`, `avg_win`, `avg_loss`, `avg_holding_days` |
+| **Capital & Health** | `capital_exposure` (%), `turnover` (x), `n_forced_liquidations`, `n_rejected_orders`, `blown_up`, `reconciliation_drift` |
+| **Breakdowns** | `by_symbol` (`{sym: {n_trades, win_rate, net_pnl, expectancy}}`), `by_exit_reason` (`{reason: {n_trades, share, win_rate, net_pnl, expectancy}}`) |

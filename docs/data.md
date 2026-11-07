@@ -1,47 +1,43 @@
-# Data Pipeline — `python main.py data`
+# Data Pipeline
 
-Downloads history from CZCE, SHFE and DCE, caches the raw payloads, and builds two CSVs per product: contract-level bars for execution, and an open-interest–weighted continuous series for signals.
+Downloads historical daily bars from `CZCE`, `SHFE`, and `DCE`, caches raw exchange payloads, and generates contract-level CSVs plus open-interest–weighted continuous series.
 
-| Argument | Meaning | Default |
-| --- | --- | --- |
-| `symbols` | Products to sync, positional | all registered products |
-| `--force` | Re-download everything, ignoring the cache | off |
-| `--rebuild-only` | Rebuild CSVs from the local cache, no network | off |
+## CLI
 
 ```bash
-python main.py data                          # incremental refresh, all products
-python main.py data SA CF                    # selected products
-python main.py data --force                  # full re-download
-python main.py data --rebuild-only
+python main.py data [symbols ...] [--force] [--rebuild-only]
 ```
 
-**First run takes about an hour.** CZCE ships one file per year, but SHFE and DCE ship one payload per trading day, so a cold cache is thousands of requests.
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `symbols` | `str...` | All registered | Product codes to sync (e.g., `SA CF`) |
+| `--force` | `flag` | `False` | Ignore local cache and re-download all history |
+| `--rebuild-only` | `flag` | `False` | Rebuild CSVs from local `cache/` without network requests |
+
+- **Credentials**: `DCE` requires `DCE_API_KEY` and `DCE_SECRET` environment variables.
+- **Cache granularity**: `CZCE` caches 1 file/year; `SHFE` and `DCE` cache 1 payload/trading day.
 
 ## Outputs
 
-| Path | Content |
-| --- | --- |
-| `cache/{CZCE,SHFE,DCE}/` | Raw exchange payloads, one file per venue-native unit |
-| `data/{SYMBOL}.csv` | Contract-level daily OHLC / settle / volume / OI |
-| `data/{SYMBOL}_weighted.csv` | OI-weighted continuous series, one row per day |
+| Path | Format | Usage |
+| --- | --- | --- |
+| `cache/{CZCE,SHFE,DCE}/` | Raw venue payloads | Local download cache |
+| `data/{SYMBOL}.csv` | Daily contract bars (`open,high,low,close,settle,volume,oi`) | Order fills, roll execution, mark-to-market |
+| `data/{SYMBOL}_weighted.csv` | OI-weighted continuous daily series | Strategy signals (`SetupContext` / `BarContext`) and chart candles |
 
-The weighted series is what strategies see; orders fill on the contract-level bars.
+## Product Registry (`datafeed/products.json`)
 
-## Product registry — `datafeed/products.json`
+Loaded at import into `datafeed.products.PRODUCTS`. Managed via `list_products()`, `get_product()`, `require_products()`, `product_costs()`, `tick_size()`, `roll_rule()`, `validate_product()`, `parse_product()`, `save_registry()`, and `reload_registry()`.
 
-Adding a product means adding an entry here. `datafeed/products.py` loads this file at import into the `PRODUCTS` dict and provides `validate_product`/`save_registry`/`reload_registry` for writers; every other helper (`product_costs`, `roll_rule`, `list_products`, ...) is unchanged from before the registry moved out of source code.
-
-| Key | Meaning |
-| --- | --- |
-| `exchange` | `CZCE` / `SHFE` / `DCE`, selects the download adapter |
-| `name`, `name_zh` | Labels used in reports and charts |
-| `start_year` | First year to download |
-| `multiplier` | Contract size (units per lot) |
-| `tick_size` | Minimum price increment |
-| `margin_rate` | Initial margin as a fraction of notional |
-| `commission_rate` | Fee as a fraction of notional |
-| `commission_per_lot` | Fee as fixed CNY per lot |
-| `main_months` | Delivery months carrying the liquidity |
-| `roll_lead_months` | How many months before delivery to roll out |
-
-A contract is rolled out of on the first calendar day of the month `roll_lead_months` before its delivery month — the `05` contract is dropped on April 1st.
+| Field | Type | Description |
+| --- | --- | --- |
+| `exchange` | `'CZCE' \| 'SHFE' \| 'DCE'` | Exchange adapter selector |
+| `name` / `name_zh` | `str` | English and Chinese display names |
+| `start_year` | `int` | Earliest year to fetch |
+| `multiplier` | `int \| float` | Contract multiplier (units per lot) |
+| `tick_size` | `float` | Minimum price fluctuation |
+| `margin_rate` | `float` | Initial margin ratio (fraction of notional) |
+| `commission_rate` | `float` (optional) | Commission as fraction of notional |
+| `commission_per_lot` | `float` (optional) | Fixed commission in CNY per lot |
+| `main_months` | `list[int]` | Active delivery months (e.g., `[1, 5, 9]`) |
+| `roll_lead_months` | `int` | Months before delivery month to roll out (rolls on the 1st calendar day of `delivery_month - roll_lead_months`) |

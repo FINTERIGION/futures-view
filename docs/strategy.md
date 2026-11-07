@@ -1,13 +1,23 @@
 # Writing a Strategy
 
-Subclass `Strategy` from `strategies.base`, precompute indicators in `setup`, trade in `on_bar`. Drop the file anywhere under `strategies/`, then modules are discovered automatically, and the short CLI name is the class name snake-cased without a trailing `_strategy` (`DoubleMaStrategy` → `double_ma`). Two classes that reduce to the same name make discovery raise until one is renamed, rather than one silently shadowing the other.
+Strategies subclass `strategies.base.Strategy`, precompute indicators on the OI-weighted series in `setup`, and emit target or delta orders in `on_bar`.
+
+## Discovery & Naming
+
+- **Location**: Drop `.py` modules into `strategies/` (see `strategies/my_strategy.py` template).
+- **Short key**: Class name converted to `snake_case` with trailing `_strategy` stripped (e.g., `DoubleMaStrategy` → `double_ma`).
+- **Collision rule**: Duplicate short keys raise an error on discovery rather than shadowing.
+
+## Minimal Template
 
 ```python
 import talib
-from .base import Strategy
+from .base import Int, Strategy
+
 
 class MyStrategy(Strategy):
     params = {'period': 20, 'lots': 1}
+    space = {'period': Int(5, 120)}
 
     def setup(self, ctx):
         for sym in ctx.symbols:
@@ -25,79 +35,60 @@ class MyStrategy(Strategy):
                 ctx.close(sym)
 ```
 
-Start from `strategies/my_strategy.py` if you want a template.
+## Class Attributes & Lifecycle
 
-## Class attributes
+| Member | Type / Signature | Description |
+| --- | --- | --- |
+| `params` | `dict[str, Any]` | Default parameter values; merged with overrides into `self.p` |
+| `space` | `dict[str, Int \| Float \| Categorical]` | Tunable parameter bounds exposed in Web UI and validated on requests (keys must exist in `params`) |
+| `setup(self, ctx)` | `SetupContext -> None` | Called once before the day loop to register full-series indicators |
+| `on_bar(self, ctx)` | `BarContext -> None` | Called once per bar at `SIGNAL` phase; queued orders fill at the next `OPEN` |
+| `on_finish(self, engine)` | `Engine -> None` | Optional hook called once after the day loop completes |
 
-| Attribute | Meaning |
-| --- | --- |
-| `params` | Dict of defaults; instance values live on `self.p`, overridden via `MyStrategy(**kw)` or `--param` |
-| `space` | The tunable params and the range each is plausible over, `{name: Int / Float / Categorical}` |
+## `SetupContext` API
 
-## Lifecycle
+| Attribute / Method | Return Type | Description |
+| --- | --- | --- |
+| `ctx.symbols` | `list[str]` | Symbols loaded in the current universe |
+| `ctx.dates` | `np.ndarray` | Array of trading dates |
+| `ctx.market` | `MarketData` | Full panel data for cross-sectional precomputation |
+| `ctx.open/high/low/close/settle/volume/oi(sym)` | `np.ndarray[float64]` | Full-series OI-weighted array, guarded against embedded `NaN` |
+| `ctx.add_indicator(name, sym, array, *, allow_gaps=False)` | `None` | Registers indicator array and advances `sym`'s warmup to its first non-`NaN` index. Set `allow_gaps=True` to allow internal `NaN` values |
 
-| Method | When |
-| --- | --- |
-| `setup(ctx)` | Once, before the day loop. Register full-series indicators here |
-| `on_bar(ctx)` | Once per trading day, after warmup. Orders placed here fill at the **next** open |
-| `on_finish(engine)` | Optional, once after the day loop |
+## `BarContext` API
 
-## `SetupContext`
+| Attribute / Method | Return Type | Description |
+| --- | --- | --- |
+| `ctx.i` / `ctx.date` / `ctx.symbols` | `int` / `date` / `list[str]` | Current bar index, date, and universe symbols |
+| `ctx.bar(sym)` | `Bar` | Current weighted bar (`open, high, low, close, settle, volume, oi`) |
+| `ctx.ind(name, sym)` | `float` | Value of registered indicator `name` at `ctx.i` |
+| `ctx.can_trade(sym)` | `bool` | `True` if `sym` warmup is complete, listed, printed today, and its mapped contract is tradable |
+| `ctx.position(sym)` | `int` | Current settled net lots (signed; excludes deferred orders in flight) |
+| `ctx.contract(sym)` | `str` | Active calendar contract code for `sym` on this bar (e.g., `'SA509'`) |
+| `ctx.equity` / `cash` / `margin_used` / `available` | `float` | Current mark-to-market account balances |
+| `ctx.queued_orders()` | `dict[str, int]` | Copy of `{symbol: lot_delta}` queued so far on this bar |
+| `ctx.set_target(sym, lots)` | `None` | Queue delta to reach `lots` net position (accounts for held position + `deferred` orders; idempotent per bar) |
+| `ctx.close(sym)` | `None` | Alias for `ctx.set_target(sym, 0)` |
+| `ctx.buy(sym, lots=1)` / `ctx.sell(sym, lots=1)` | `None` | Add signed delta (`+lots` / `-lots`) to this bar's queued order |
+| `ctx.set_stop(sym, price=None, distance=None)` | `None` | Arm/update protective stop at next `OPEN` (pass `price` or `distance`) |
+| `ctx.cancel_stop(sym)` | `None` | Remove pending and live stop for `sym` |
+| `ctx.stop_price(sym)` | `float \| None` | Currently armed stop price on the held contract (roll-adjusted) |
+| `ctx.extreme(sym)` | `float \| None` | Highest high (long) or lowest low (short) on the execution contract since entry (roll-adjusted) |
+| `ctx.set_take_profit(sym, price=None, distance=None)` | `None` | Arm/update intrabar limit target at next `OPEN` (pass `price` or `distance`) |
+| `ctx.cancel_take_profit(sym)` | `None` | Remove pending and live take-profit for `sym` |
+| `ctx.size_for_risk(sym, stop_distance, risk_pct)` | `int` | `int((equity * risk_pct) // (stop_distance * multiplier))` (`0` if `< 1` lot) |
 
-Full-series arrays of the OI-weighted series, NaN-guarded:
+## Protective Bracket Rules
 
-| Accessor | Returns |
-| --- | --- |
-| `ctx.symbols` | Products in this run |
-| `ctx.open/high/low/close/settle/volume/oi(sym)` | `np.ndarray` over the whole loaded history |
-| `ctx.add_indicator(name, sym, array)` | Registers a precomputed indicator |
-
-`add_indicator` sets warmup **per product**: it pushes out the bar from which that symbol becomes tradable and leaves the others alone, so a product whose history starts late sits out while the rest of the universe trades.
-
-## `BarContext`
-
-Handed to `on_bar`, after INTRABAR and before SETTLE:
-
-| Accessor | Meaning |
-| --- | --- |
-| `ctx.bar(sym)` | `Bar(open, high, low, close, settle, volume, oi)` on the weighted series |
-| `ctx.ind(name, sym)` | Registered indicator value at this bar |
-| `ctx.position(sym)` | Net lots, signed |
-| `ctx.equity` / `cash` / `margin_used` / `available` | Account state |
-| `ctx.can_trade(sym)` | Own warmup done + listed + real print today + mapped contract live today |
-| `ctx.contract(sym)` | Today's calendar contract code, e.g. `'SA509'` |
-| `ctx.queued_orders()` | Orders queued this bar, not yet filled |
-| `ctx.set_target(sym, lots)` | Target-position order; flips side in one order |
-| `ctx.buy/sell(sym, lots)` / `ctx.close(sym)` | Delta orders / flatten |
-| `ctx.set_stop(sym, price=…, distance=…)` / `ctx.cancel_stop(sym)` | Protective stop, armed at the next open |
-| `ctx.stop_price(sym)` | Currently resting stop price on the held contract, or `None` |
-| `ctx.extreme(sym)` | Best price reached on the held contract since entry (entry bar included, roll-adjusted), or `None` when flat |
-| `ctx.set_take_profit(sym, price=…, distance=…)` / `ctx.cancel_take_profit(sym)` | Target that closes the position when touched intrabar; OCO with the stop |
-| `ctx.size_for_risk(sym, stop_distance, risk_pct)` | Lots sized so a stop-out risks `risk_pct` of equity; `0` when the budget will not stretch to one lot |
-
-Orders always fill against that day's calendar contract, so strategy code never names a physical contract or handles a roll itself.
-
-### The protective bracket
-
-`set_stop` and `set_take_profit` are the two legs of one OCO bracket. Both arm at the next OPEN against the fill that just happened, are then checked intrabar against the execution contract's high/low, and close the **whole** position when touched. Whichever fills first cancels the other. Both rules survive a dark session. What happens after the position closes depends on the kind of rule:
-
-- A `distance` rule carries into the next trade and re-arms against that trade's entry, so cancel it explicitly when a strategy exits for its own reasons.
-- A `price` rule belongs to the trade it first armed on and is dropped when that trade ends — closed, reversed, or force-liquidated. One absolute level carried into the next trade would sit on the wrong side of it: a long's stop below the market is a short's stop that fills at the short's first open. Set a fresh `price` for each trade. One set while flat waits for the entry it was set for, even if that entry is held over a dark session.
-
-**The level follows the rule and the position, both.** A resting leg is re-resolved at the next OPEN whenever what it was resolved *from* moves — the position's average cost, its side, or the contract it sits on. So:
-
-- Calling `set_stop` again while one already rests **does** move it, at the next OPEN. That is how a trailing stop is written; no `cancel_stop` first.
-- Adding to a position re-anchors a `distance` leg against the new average cost, which is what "`distance` below its cost" means once there is more than one fill in the position. Pass an explicit `price` to pin a level that should not move.
-- Reversing re-arms a `distance` leg on the correct side of the new position and drops a `price` leg, and a roll moves the level onto the new contract's price scale (see [Backtesting](backtest.md)).
-- A dark session changes nothing. It cannot fill either leg, so it does not touch them either.
-
-Pass a `distance`, not a `price`, whenever you can. Signals come off the OI-weighted continuous series but fills land on a real contract, and the two run a basis of a few percent — a level lifted from the weighted series lands in the wrong place, while a distance is anchored on the actual fill and the basis cancels.
-
-A take-profit is a *touch* fill, at the target. That is not the same rule as letting the bar close through the target and leaving at the next open, and the difference is not small. Which rule suits a strategy is an empirical question — check the `exit_reason` split in the run summary rather than assuming.
+- **OCO execution**: `set_stop` and `set_take_profit` form an OCO pair armed at `OPEN` and checked at `INTRABAR`. Filling either flattens the position and cancels the other.
+- **`distance` vs `price` persistence**:
+  - `distance`: Anchored to actual fill `avg_entry` (cancels weighted-vs-contract basis). Persists across trades unless cancelled via `cancel_stop` / `cancel_take_profit`.
+  - `price`: Scoped to a single logical trade; automatically cleared when the trade closes, flips, or liquidates.
+- **Dynamic re-resolution**: At `OPEN`, active legs update if the strategy called `set_stop`/`set_take_profit` again (trailing stop), if scale-in fills changed `avg_entry`, if the position flipped, or if the contract rolled.
 
 ## Conventions
 
-- Guard every symbol with `can_trade(sym)` before trading it. An order for a product whose own indicators are not valid yet is dropped, and the strategy is never told; the run counts those and warns at the end (`warmup_skips`), because from the outside they look exactly like a signal that never fired.
-- Prefer `set_target` over `buy`/`sell`: it is idempotent, so a repeated signal does not stack up a position.
-- Cross-sectional strategies read the whole `ctx.symbols` loop as one decision; see `strategies/cross_sectional_momentum.py`.
-- Keep `lots` in `params` if you want `--lots` to work.
+- Always check `if not ctx.can_trade(sym): continue` before reading indicators or placing orders; orders placed during warmup are dropped and counted in `warmup_skips`.
+- Prefer `ctx.set_target(sym, lots)` over `buy`/`sell` to avoid stacking duplicate signals across bars or deferred sessions.
+- Prefer `distance=` over `price=` for stops and targets so basis between the weighted series and execution contract does not skew trigger levels.
+- Include `'lots': 1` in `params` to support the CLI `--lots` flag.

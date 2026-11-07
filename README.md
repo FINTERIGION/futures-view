@@ -1,15 +1,18 @@
 # FuturesView
 
-**A chart-first research workspace for Chinese commodity futures** on **CZCE**, **SHFE**, and **DCE**, running locally in your browser on top of a self-built daily-bar backtesting engine.
+**A chart-first research workspace for Chinese commodity futures** on **CZCE**, **SHFE**, and **DCE**, running locally in your browser on top of a daily-bar backtesting engine.
 
-Chart a product and run a backtest on that same picture. The panel and `main.py` share one engine, so a run gives the same numbers from either place.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/webui-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/webui-light.png">
+  <img alt="FuturesView Web UI" src="docs/assets/webui-dark.png" width="100%">
+</picture>
 
 ## Features
 
-- **OI-weighted chart, rolls marked.** The charted product's full open-interest–weighted daily history, with roll points on the candles. Built-in indicators draw on the price pane or in their own panes; drop a file in `indicators/` and reload.
-- **Backtests on the same chart.** Fills land as markers, the test window is shaded, and the drawer shows equity, trades, and per-symbol / per-exit-reason breakdowns. Any past run reopens onto the chart.
-- **Signals on the continuous series, fills on real contracts.** Orders execute on each product's rolling main contract, with its multiplier, margin, commission, and daily forced liquidation.
-- **One pipeline for CZCE, SHFE, and DCE.** Contract-level OHLC is cleaned into the series both the panel and the CLI read. `main.py` runs the same downloads and backtests without a browser.
+- **Specialized for Futures Market.** Signals compute on a smooth open-interest–weighted continuous series while orders fill on actual rolling main contracts, with contract multipliers, margin, commissions, roll rules, and forced liquidation settings.
+- **All-in-One Workspace.** Manage data downloads, overlay indicators, track signal snapshots, and run backtests in a single screen where fills, roll points, equity curves, and trade logs all stay linked to the same chart.
+- **Your Panel, Your Way.** Drop your own Python class into `indicators/` or `strategies/` and hot-reloaded parameter spaces automatically become interactive UI controls and chart panes, alongside editable product specs and signals.
 
 ## Quick Start
 
@@ -45,32 +48,22 @@ Start the panel, then open [http://127.0.0.1:8888](http://127.0.0.1:8888).
 python main.py web
 ```
 
-To reach the panel from another machine or the public internet, set an access password first (the lock icon in the top bar), then bind past localhost, e.g. `python main.py web --host 0.0.0.0`. The password is optional and stored locally; `python main.py web --clear-password` forgets it if you lose it.
-
 ## Command Line
 
-The same data downloads and backtests also run without a browser. Backtest outputs (charts, trade log) land in `results/`.
+The same functions also run without a browser. Backtest outputs (charts, trade log) land in `results/`.
 
 ```bash
 python main.py data
 python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --strategy double_ma --cash 100000
 ```
 
-| Subcommand | What it does                                              |
-| ---------- | --------------------------------------------------------- |
-| `data`     | Download exchange history, rebuild OI-weighted daily bars |
-| `backtest` | Run one strategy over a date range                        |
-| `web`      | Serve the browser panel                                   |
-
-
 ## Documentation
 
-
-| Page                                      | Contents                                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ |
-| [Data Pipeline](docs/data.md)             | Exchange downloads, `main.py data` flags, generated files, product registry          |
-| [Backtesting](docs/backtest.md)           | `main.py backtest` flags, four-phase execution model, outputs, metrics               |
-| [Writing a Strategy](docs/strategy.md)    | `Strategy` lifecycle, `SetupContext` / `BarContext` API, conventions                 |
-| [Writing an Indicator](docs/indicator.md) | `Indicator` class, `Output` styling, panes and value ranges, the picker in the panel |
-| [Web Panel](docs/web.md)                  | Browser UI for products, data, backtest, run history                                 |
-| [Project Layout](docs/architecture.md)    | Directory map, tests                                                                 |
+| Page                                      | Contents                                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [Data Pipeline](docs/data.md)             | `main.py data` CLI, exchange cache & CSV outputs, `datafeed/products.json` registry schema     |
+| [Backtesting](docs/backtest.md)           | `main.py backtest` CLI, four-phase execution model, roll & margin rules, outputs, metrics      |
+| [Writing a Strategy](docs/strategy.md)    | `Strategy` lifecycle, `SetupContext` / `BarContext` API, OCO protective bracket, conventions   |
+| [Writing an Indicator](docs/indicator.md) | `Indicator` class attributes, `Output` styling & color tokens, `IndicatorContext`, HTTP API    |
+| [Web Panel](docs/web.md)                  | `main.py web` CLI, frontend build/dev, workspace modules, HTTP routes, security & job guards   |
+| [Project Layout](docs/architecture.md)    | Repository directory tree, test suite, and lint commands                                       |
