@@ -20,13 +20,16 @@ vi.mock('../api/endpoints', () => ({
 // Canvas-backed and irrelevant to the states under test -- except for the
 // pane count, which is the one thing about the built option these tests can
 // see, and the only way to tell "volume is drawn" from "volume is ticked".
+const seenOptions: unknown[] = []
 vi.mock('../components/EChart', () => ({
-  EChart: ({ option }: { option: { grid?: unknown[] } }) => (
-    <div data-testid="chart" data-panes={option.grid?.length ?? 0} />
-  ),
+  EChart: ({ option, preserveDataZoom }: { option: { grid?: unknown[] }; preserveDataZoom?: boolean }) => {
+    if (preserveDataZoom && seenOptions.at(-1) !== option) seenOptions.push(option)
+    return <div data-testid="chart" data-panes={option.grid?.length ?? 0} />
+  },
 }))
 
 beforeEach(() => {
+  seenOptions.length = 0
   vi.mocked(productsApi.list).mockResolvedValue(PRODUCTS)
   vi.mocked(productsApi.roll).mockRejectedValue(new ApiError(400, 'no roll calendar'))
   vi.mocked(strategiesApi.list).mockResolvedValue(STRATEGIES)
@@ -314,5 +317,23 @@ describe('editing an indicator’s params', () => {
     await waitFor(() => expect(screen.queryByText(/outside its declared range/)).toBeNull())
     expect(indicatorsApi.values).toHaveBeenCalledWith('SA', 'rsi', {})
     expect(stored()).toEqual({})
+  })
+})
+
+describe('switching bottom drawer tabs', () => {
+  it('keeps the main chart option reference stable across tab switches', async () => {
+    vi.mocked(productsApi.bars).mockResolvedValue(EMPTY_BARS)
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    await waitFor(() => expect(screen.getByTestId('chart')).toBeInTheDocument())
+    const countAfterLoad = seenOptions.length
+    expect(countAfterLoad).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('tab', { name: 'Signals' }))
+    await user.click(screen.getByRole('tab', { name: 'Backtest History' }))
+    await user.click(screen.getByRole('tab', { name: 'Backtest' }))
+
+    expect(seenOptions.length).toBe(countAfterLoad)
   })
 })

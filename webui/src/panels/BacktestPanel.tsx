@@ -292,6 +292,7 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     queryKey: ['run', runId],
     queryFn: () => runsApi.get(runId as string),
     enabled: runId !== null,
+    staleTime: 5 * 60 * 1000,
   })
 
   return (

@@ -1,9 +1,9 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, errorMessage } from '../api/client'
 import { indicatorsApi, productsApi, runsApi } from '../api/endpoints'
-import type { IndicatorInfo, RunDetail } from '../api/types'
+import type { IndicatorInfo, IndicatorValues, RunDetail } from '../api/types'
 import { MAX_SUB_PANES, superChartOption, type IndicatorLayer, type PaneKey } from '../charts/superChartOption'
 import { EChart } from '../components/EChart'
 import { Icon } from '../components/Icon'
@@ -11,6 +11,10 @@ import { useIsDarkMode } from '../theme/useIsDarkMode'
 import { useWorkspace } from '../shell/WorkspaceContext'
 import { ChartToolbar } from './ChartToolbar'
 import { activeOverrides } from './indicatorParams'
+
+function combineIndicatorQueries(results: Array<{ data: IndicatorValues | undefined; error: Error | null }>) {
+  return results.map((r) => ({ data: r.data, error: r.error }))
+}
 
 /**
  * The main screen: one product's OI-weighted daily candlestick, always
@@ -39,35 +43,46 @@ export function SuperChart() {
   // Only indicators the catalog still knows about and can draw. A key left in
   // localStorage for a class the user has since deleted or broken is dropped
   // here rather than becoming an empty pane.
-  const selected: IndicatorInfo[] = (indicators ?? [])
-    .map((key) => (catalog ?? []).find((c) => c.key === key))
-    .filter((info): info is IndicatorInfo => Boolean(info) && info!.errors.length === 0)
+  const selected: IndicatorInfo[] = useMemo(
+    () =>
+      (indicators ?? [])
+        .map((key) => (catalog ?? []).find((c) => c.key === key))
+        .filter((info): info is IndicatorInfo => Boolean(info) && info!.errors.length === 0),
+    [indicators, catalog],
+  )
 
   // The params are part of the key, so each set is cached on its own and
   // flipping back to one already fetched redraws without a request. The
   // editor seeds this same key when its server check succeeds -- see
   // chart/IndicatorParamsEditor.tsx.
   const overridesOf = (info: IndicatorInfo) => activeOverrides(info, indicatorParams[info.key])
-  const values = useQueries({
-    queries: selected.map((info) => {
-      const params = overridesOf(info)
-      return {
-        queryKey: ['indicator', chartSymbol, info.key, params],
-        queryFn: () => indicatorsApi.values(chartSymbol, info.key, params),
-        enabled: Boolean(chartSymbol),
-        staleTime: 5 * 60 * 1000,
-        retry: false,
-      }
-    }),
-  })
+  const indicatorQueries = useMemo(
+    () =>
+      selected.map((info) => {
+        const params = activeOverrides(info, indicatorParams[info.key])
+        return {
+          queryKey: ['indicator', chartSymbol, info.key, params],
+          queryFn: () => indicatorsApi.values(chartSymbol, info.key, params),
+          enabled: Boolean(chartSymbol),
+          staleTime: 5 * 60 * 1000,
+          retry: false,
+        }
+      }),
+    [selected, indicatorParams, chartSymbol],
+  )
+  const values = useQueries({ queries: indicatorQueries, combine: combineIndicatorQueries })
 
-  const layers: IndicatorLayer[] = selected.map((info, i) => ({
-    info,
-    params: { ...info.params, ...overridesOf(info) },
-    // `null` while in flight: the pane is laid out from the *selection*, so
-    // panes do not shuffle as each query resolves one after another.
-    values: values[i]?.data ?? null,
-  }))
+  const layers: IndicatorLayer[] = useMemo(
+    () =>
+      selected.map((info, i) => ({
+        info,
+        params: { ...info.params, ...activeOverrides(info, indicatorParams[info.key]) },
+        // `null` while in flight: the pane is laid out from the *selection*, so
+        // panes do not shuffle as each query resolves one after another.
+        values: values[i]?.data ?? null,
+      })),
+    [selected, indicatorParams, values],
+  )
 
   // The router turns a user's raising `compute()` into a 422 carrying their
   // own exception message, which is the whole point of that handler -- with
@@ -84,11 +99,17 @@ export function SuperChart() {
   // ticked -- it is read against the candles, and it does not count against
   // `MAX_SUB_PANES`, which is about how many *indicator* panes still leave the
   // price pane readable.
-  const subPanes = selected.filter((info) => info.pane === 'sub').map((info) => `ind:${info.key}` as PaneKey)
-  const allPanes: PaneKey[] = [
-    ...(showVolume ? (['volume'] as PaneKey[]) : []),
-    ...subPanes.slice(0, MAX_SUB_PANES),
-  ]
+  const subPanes = useMemo(
+    () => selected.filter((info) => info.pane === 'sub').map((info) => `ind:${info.key}` as PaneKey),
+    [selected],
+  )
+  const allPanes: PaneKey[] = useMemo(
+    () => [
+      ...(showVolume ? (['volume'] as PaneKey[]) : []),
+      ...subPanes.slice(0, MAX_SUB_PANES),
+    ],
+    [showVolume, subPanes],
+  )
   const hiddenPanes = Math.max(0, subPanes.length - MAX_SUB_PANES)
 
   // An indicator whose window is longer than the loaded history computes to
@@ -114,6 +135,7 @@ export function SuperChart() {
     queryKey: ['run', runId],
     queryFn: () => runsApi.get(runId as string),
     enabled: runId !== null,
+    staleTime: 5 * 60 * 1000,
     retry: false,
   })
 
@@ -129,7 +151,33 @@ export function SuperChart() {
     queryKey: ['run-price', runId, chartSymbol],
     queryFn: () => runsApi.price(runId as string, chartSymbol),
     enabled: runId !== null && symbolHasPrice,
+    staleTime: 5 * 60 * 1000,
   })
+
+  const runStart = run?.start ?? null
+  const runEnd = run?.end ?? null
+  const runWindow = useMemo(
+    () => (runStart && runEnd ? { start: runStart, end: runEnd } : null),
+    [runStart, runEnd],
+  )
+  const bars = barsData?.bars
+  const roll = rollData?.roll
+  const signals = price?.signals
+  const option = useMemo(
+    () =>
+      bars
+        ? superChartOption({
+            dark,
+            bars,
+            panes: allPanes,
+            roll,
+            signals,
+            window: runWindow,
+            indicators: layers,
+          })
+        : null,
+    [dark, bars, allPanes, roll, signals, runWindow, layers],
+  )
 
   if (!chartSymbol) {
     return (
@@ -169,7 +217,7 @@ export function SuperChart() {
     )
   }
 
-  if (barsLoading || !barsData) {
+  if (barsLoading || !barsData || !option) {
     return (
       <div className="chart-area">
         <ChartToolbar />
@@ -180,18 +228,6 @@ export function SuperChart() {
       </div>
     )
   }
-
-  const runWindow = run && run.start && run.end ? { start: run.start, end: run.end } : null
-
-  const option = superChartOption({
-    dark,
-    bars: barsData.bars,
-    panes: allPanes,
-    roll: rollData?.roll,
-    signals: price?.signals,
-    window: runWindow,
-    indicators: layers,
-  })
 
   return (
     <div className="chart-area">

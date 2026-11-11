@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { alertsApi, dataApi, jobsApi, strategiesApi } from '../api/endpoints'
@@ -345,6 +346,43 @@ describe('refreshing', () => {
     source.emit({ type: 'state', status: 'done', progress: 1, message: 'Done' })
     await waitFor(() => expect(entryRow('double_ma')).toHaveTextContent('Refresh needed'))
     expect(alertsApi.preview).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a refreshed snapshot up to date after switching tabs and remounting', async () => {
+    const user = userEvent.setup()
+    seedEntries([{ id: 'e1', strategy: 'double_ma', symbols: ['SA', 'CF'] }], 'e1')
+    function TabHarness() {
+      const [show, setShow] = useState(true)
+      return (
+        <>
+          <button type="button" onClick={() => setShow((v) => !v)}>
+            Toggle tab
+          </button>
+          {show && <AlertPanel />}
+        </>
+      )
+    }
+    renderWorkspace(<TabHarness />, { path: '/?symbol=SA&tab=alerts' })
+
+    await user.click(screen.getByRole('button', { name: 'Calculate now' }))
+    await finishLatestPreview()
+
+    await user.click(within(entryRow('double_ma')).getByRole('button', { name: 'Update data' }))
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(1))
+    MockEventSource.instances.at(-1)!.emit({ type: 'state', status: 'done', progress: 1, message: 'Done' })
+    await waitFor(() => expect(entryRow('double_ma')).toHaveTextContent('Refresh needed'))
+
+    vi.mocked(alertsApi.preview).mockResolvedValueOnce({ job_id: 'aj2' })
+    await user.click(within(entryRow('double_ma')).getByRole('button', { name: 'Refresh' }))
+    await finishLatestPreview()
+    expect(entryRow('double_ma')).toHaveTextContent('Up to date')
+
+    await user.click(screen.getByRole('button', { name: 'Toggle tab' }))
+    expect(screen.queryByText('CF605')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Toggle tab' }))
+    expect(entryRow('double_ma')).toHaveTextContent('Up to date')
+    expect(entryRow('double_ma')).not.toHaveTextContent('Refresh needed')
+    expect(screen.getByText('CF605')).toBeInTheDocument()
   })
 
   it('runs Refresh all sequentially through the single alert job slot', async () => {

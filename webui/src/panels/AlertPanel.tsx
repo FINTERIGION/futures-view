@@ -41,6 +41,7 @@ interface InflightPreview {
 const previewCache = new Map<string, AlertSnapshot>()
 const previewErrors = new Map<string, string>()
 const stalePreviews = new Set<string>()
+let announcedDataJob: string | null = null
 let inflight: InflightPreview | null = null
 let starting = false
 
@@ -52,6 +53,7 @@ export function resetAlertPreviewState() {
   previewCache.clear()
   previewErrors.clear()
   stalePreviews.clear()
+  announcedDataJob = null
   inflight = null
   starting = false
 }
@@ -291,6 +293,14 @@ export function AlertPanel() {
   )
 
   useEffect(() => {
+    const state = dataJob.state
+    if (state?.status !== 'done' || announcedDataJob === state.id) return
+    announcedDataJob = state.id
+    for (const key of previewCache.keys()) stalePreviews.add(key)
+    queueMicrotask(() => setCacheRev((n) => n + 1))
+  }, [dataJob.state])
+
+  useEffect(() => {
     const state = job.state
     const tracked = state && inflight?.jobId === state.id ? inflight : null
     if (!tracked) return
@@ -335,15 +345,6 @@ export function AlertPanel() {
       if (entry) void startPreview(entry, batchTotal > 0)
     })
   }, [job.isActive, pendingIds, batchTotal, cacheRev, startPreview])
-
-  const announcedDataJob = useRef<string | null>(null)
-  useEffect(() => {
-    const state = dataJob.state
-    if (state?.status !== 'done' || announcedDataJob.current === state.id) return
-    announcedDataJob.current = state.id
-    for (const key of previewCache.keys()) stalePreviews.add(key)
-    queueMicrotask(() => setCacheRev((n) => n + 1))
-  }, [dataJob.state])
 
   let draft = paramDraft
   const composeSeedKey = composer && composeStrategy ? `${composeSeq}:${composeStrategy.key}` : null
