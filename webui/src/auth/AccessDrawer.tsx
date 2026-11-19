@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { AUTH_STATUS_KEY, authApi } from '../api/auth'
 import { errorMessage } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { Drawer } from '../components/Drawer'
 import { Icon } from '../components/Icon'
+import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
 import './auth.css'
 
@@ -99,7 +99,7 @@ export function AccessDrawer({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <>
-      <Drawer open={open} onClose={handleClose} title={t('auth.access')}>
+      <Modal open={open} onClose={handleClose} title={t('auth.access')} size="md" closeOnEscape={!clearOpen}>
         <div className="hint-banner">
           <Icon name="info" />
           <span>{t('auth.accessHint')}</span>
@@ -182,7 +182,7 @@ export function AccessDrawer({ open, onClose }: { open: boolean; onClose: () => 
             </div>
           </div>
         )}
-      </Drawer>
+      </Modal>
       <ConfirmDialog
         open={clearOpen}
         title={t('auth.clearPassword')}

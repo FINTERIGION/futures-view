@@ -241,6 +241,8 @@ export interface RunPrice {
 
 // -------------------------------------------------------------------------
 
+export type AlertHolding = 'flat' | 'long' | 'short'
+
 export type AlertOperation =
   | 'flat'
   | 'hold'
@@ -259,7 +261,10 @@ export interface AlertLevel {
 export interface AlertSymbolRow {
   symbol: string
   contract: string
+  holding?: AlertHolding
   operation: AlertOperation
+  entry_price?: number | null
+  last_price?: number | null
   stop: AlertLevel
   take_profit: AlertLevel
 }
@@ -268,6 +273,108 @@ export interface AlertSnapshot {
   asof: string | null
   blown_up: boolean
   symbols: AlertSymbolRow[]
+}
+
+export interface AlertMonitor {
+  id: string
+  name: string
+  strategy: string
+  symbols: string[]
+  params: Record<string, unknown>
+  notify_enabled: boolean
+  created_at: number
+  updated_at: number
+  last_snapshot: AlertSnapshot | null
+  last_checked_at: number | null
+  last_error: string | null
+}
+
+export interface AlertMonitorInput {
+  name?: string
+  strategy: string
+  symbols: string[]
+  params?: Record<string, unknown>
+  notify_enabled?: boolean
+}
+
+export interface AlertMonitorImportItem {
+  id?: string
+  name?: string
+  strategy: string
+  symbols: string[]
+  params?: Record<string, unknown>
+  notify_enabled?: boolean
+  created_at?: number
+}
+
+export type NotifyChannelKind = 'telegram' | 'webhook' | (string & {})
+
+export interface NotifyProviderInfo {
+  kind: NotifyChannelKind
+  label: string
+  label_zh: string
+}
+
+export interface NotifyChannel {
+  id: string
+  kind: NotifyChannelKind
+  name: string
+  enabled: boolean
+  config: Record<string, unknown>
+  created_at: number
+  updated_at: number
+}
+
+export interface NotifyChannelInput {
+  kind: NotifyChannelKind
+  name: string
+  enabled: boolean
+  config: Record<string, unknown>
+}
+
+export interface AlertSchedule {
+  enabled: boolean
+  times: string[]
+  timezone: string
+  weekdays_only: boolean
+  update_data: boolean
+  language: 'zh' | 'en'
+  next_run_at: string | null
+  server_now: string
+  scheduler_running: boolean
+}
+
+export interface AlertScheduleInput {
+  enabled: boolean
+  times: string[]
+  timezone: string
+  weekdays_only: boolean
+  update_data: boolean
+  language: 'zh' | 'en'
+}
+
+export interface DeliveryResult {
+  channel_id: string
+  channel_name: string
+  kind: string
+  ok: boolean
+  detail: string
+  status_code: number | null
+}
+
+export interface AlertDelivery {
+  id: string
+  trigger: string
+  scheduled_slot: string | null
+  created_at: number
+  finished_at: number | null
+  status: 'running' | 'ok' | 'partial' | 'error' | 'skipped' | 'cancelled' | 'interrupted' | string
+  monitor_count: number
+  symbols_updated: string[]
+  data_warnings: string[]
+  results: DeliveryResult[]
+  summary: string | null
+  error: string | null
 }
 
 export interface JobState {

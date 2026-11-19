@@ -13,7 +13,7 @@ of a traceback three calls deep in the engine.
 from __future__ import annotations
 
 import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -122,6 +122,7 @@ class AlertPreviewRequest(BaseModel):
     params: Dict[str, object] = Field(default_factory=dict)
     start: Optional[str] = None
     end: Optional[str] = None
+    monitor_id: Optional[str] = None
 
     @field_validator('start', 'end')
     @classmethod
@@ -142,6 +143,50 @@ class AlertPreviewRequest(BaseModel):
         if self.start > self.end:
             raise ValueError(f'start {self.start} is after end {self.end}')
         return self
+
+
+class AlertMonitorRequest(BaseModel):
+    name: str = Field(default='', max_length=120)
+    strategy: str = Field(min_length=1, max_length=120)
+    symbols: List[str] = Field(min_length=1)
+    params: Dict[str, object] = Field(default_factory=dict)
+    notify_enabled: bool = True
+
+
+class AlertMonitorImportItem(BaseModel):
+    id: Optional[str] = Field(default=None, max_length=64)
+    name: str = Field(default='', max_length=120)
+    strategy: str = Field(min_length=1, max_length=120)
+    symbols: List[str] = Field(default_factory=list)
+    params: Dict[str, object] = Field(default_factory=dict)
+    notify_enabled: bool = True
+    created_at: Optional[float] = None
+
+
+class AlertMonitorImportRequest(BaseModel):
+    entries: List[AlertMonitorImportItem] = Field(default_factory=list)
+
+
+class NotifyChannelRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    config: Dict[str, object] = Field(default_factory=dict)
+
+
+class AlertScheduleRequest(BaseModel):
+    enabled: bool = False
+    times: List[str] = Field(default_factory=lambda: ['15:30'])
+    timezone: str = Field(default='Asia/Shanghai', min_length=1, max_length=64)
+    weekdays_only: bool = True
+    update_data: bool = True
+    language: Literal['zh', 'en'] = 'zh'
+
+
+class AlertDispatchRequest(BaseModel):
+    update_data: Optional[bool] = None
+    monitor_ids: Optional[List[str]] = None
+    channel_ids: Optional[List[str]] = None
 
 
 class LoginRequest(BaseModel):

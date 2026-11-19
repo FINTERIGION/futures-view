@@ -5,6 +5,7 @@ import { productsApi } from '../api/endpoints'
 import { AccessDrawer } from '../auth/AccessDrawer'
 import { SuperChart } from '../chart/SuperChart'
 import { Icon } from '../components/Icon'
+import { AlertNotifyModal } from '../panels/AlertNotifyModal'
 import { ProductDrawer } from '../products/ProductDrawer'
 import { BottomDrawer } from './BottomDrawer'
 import { ShortcutsSheet } from './ShortcutsSheet'
@@ -55,6 +56,7 @@ export function ChartWorkspace() {
   const { data: products } = useQuery({ queryKey: ['products'], queryFn: productsApi.list })
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [accessOpen, setAccessOpen] = useState(false)
+  const [notifyOpen, setNotifyOpen] = useState(false)
   const isZh = i18n.resolvedLanguage === 'zh'
   const chartedProduct = products?.find((p) => p.code === chartSymbol)
   const productName = chartedProduct ? (isZh ? chartedProduct.name_zh : chartedProduct.name) : undefined
@@ -108,6 +110,7 @@ export function ChartWorkspace() {
     <div className="workspace-root">
       <WorkspaceTopBar
         productName={productName}
+        onShowNotify={() => setNotifyOpen(true)}
         onShowShortcuts={() => setShortcutsOpen(true)}
         onShowAccess={() => setAccessOpen(true)}
       />
@@ -133,6 +136,7 @@ export function ChartWorkspace() {
       )}
       <ShortcutsSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <AccessDrawer open={accessOpen} onClose={() => setAccessOpen(false)} />
+      <AlertNotifyModal open={notifyOpen} onClose={() => setNotifyOpen(false)} />
     </div>
   )
 }

@@ -7,6 +7,7 @@ single-process/single-machine).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import Optional
@@ -19,14 +20,27 @@ from starlette.datastructures import Headers
 
 from web.auth import COOKIE_NAME, is_authenticated, is_public_path, password_is_set
 from web.config import (
-    DEV_ORIGINS, STATIC_DIR, UNSAFE_METHODS, allowed_hosts, allowed_origins, host_allowed,
-    is_within, write_origin_allowed,
+    DEV_ORIGINS, DISABLE_SCHEDULER_ENV, STATIC_DIR, UNSAFE_METHODS, allowed_hosts,
+    allowed_origins, host_allowed, is_within, write_origin_allowed,
 )
 from web.routers import alerts, auth, backtest, data, indicators, jobs, products, runs, strategies
+from web.scheduler import scheduler as alert_scheduler
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(message)s')
 
-app = FastAPI(title='FuturesView Web Panel')
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    disabled = os.environ.get(DISABLE_SCHEDULER_ENV, '').strip().lower() in ('1', 'true', 'yes')
+    if not disabled:
+        alert_scheduler.start()
+    try:
+        yield
+    finally:
+        alert_scheduler.stop()
+
+
+app = FastAPI(title='FuturesView Web Panel', lifespan=_lifespan)
 
 
 class HostHeaderMiddleware:

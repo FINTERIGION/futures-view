@@ -43,6 +43,7 @@ describe('the web-access drawer', () => {
     renderDrawer()
 
     expect(await screen.findByText('No password')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Web access' })).toHaveClass('modal')
     await user.type(screen.getByLabelText('New password'), 'correct-horse')
     await user.type(screen.getByLabelText('Confirm password'), 'different-one')
     await user.click(screen.getByRole('button', { name: 'Set password' }))

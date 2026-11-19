@@ -34,9 +34,10 @@ OPERATIONS = (
     'flat', 'hold', 'open_long', 'open_short',
     'close', 'reverse', 'add', 'reduce',
 )
+HOLDINGS = ('flat', 'long', 'short')
 
 __all__ = [
-    'ALERT_CASH', 'OPERATIONS',
+    'ALERT_CASH', 'HOLDINGS', 'OPERATIONS',
     'classify_operation', 'run_alert_snapshot',
 ]
 
@@ -98,6 +99,35 @@ def _trading_contract(engine: Engine, sym: str, last_i: Optional[int]) -> str:
     return panel.active_contract(last_i) or ''
 
 
+def _holding_side(position: int) -> str:
+    """Direction of the live position without exposing lot counts."""
+    if position > 0:
+        return 'long'
+    if position < 0:
+        return 'short'
+    return 'flat'
+
+
+def _held_position(engine: Engine, sym: str):
+    held = engine._current_contract(sym)
+    if not held:
+        return None
+    return engine.broker.positions.get((sym, held))
+
+
+def _last_contract_price(
+    engine: Engine, sym: str, contract: str, last_i: Optional[int], pos,
+) -> Optional[float]:
+    """Latest close of ``contract`` on ``last_i``, else the held leg's mark."""
+    if last_i is not None and contract:
+        row = engine._row_for(sym, contract, last_i)
+        if row is not None:
+            return float(row[3])  # open, high, low, close, settle, oi, volume
+    if pos is not None:
+        return float(pos.last_mark)
+    return None
+
+
 def _snapshot_from_engine(engine: Engine) -> dict:
     if engine.market.n_bars == 0:
         last_i = None
@@ -115,10 +145,15 @@ def _snapshot_from_engine(engine: Engine) -> dict:
         pending = engine.pending.get(sym, 0) + engine.deferred.get(sym, 0)
         operation = classify_operation(position, pending)
         has_exposure = (position + pending) != 0
+        contract = _trading_contract(engine, sym, last_i)
+        pos = _held_position(engine, sym)
         rows.append({
             'symbol': sym,
-            'contract': _trading_contract(engine, sym, last_i),
+            'contract': contract,
+            'holding': _holding_side(position),
             'operation': operation,
+            'entry_price': float(pos.avg_entry) if pos is not None else None,
+            'last_price': _last_contract_price(engine, sym, contract, last_i, pos),
             'stop': (
                 _bracket_level(engine.live_stop.get(sym), engine.stop_spec.get(sym))
                 if has_exposure else {'price': None, 'distance': None}

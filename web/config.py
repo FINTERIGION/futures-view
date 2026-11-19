@@ -159,6 +159,11 @@ JOB_RETENTION = 200
 # accumulate for the life of the install, and rows past `list_runs`' limit are
 # not even reachable from the panel to delete by hand.
 RUN_RETENTION = 200
+# Same bounded-history rule for scheduled/manual alert delivery logs.
+ALERT_DELIVERY_RETENTION = 200
+ALERT_SCHEDULER_POLL_SECONDS = 15.0
+ALERT_SCHEDULER_GRACE_SECONDS = 120.0
+DISABLE_SCHEDULER_ENV = 'FT_DISABLE_SCHEDULER'
 
 
 def is_within(path: str, root: str) -> bool:

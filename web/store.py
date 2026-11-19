@@ -27,7 +27,7 @@ import time
 import uuid
 from typing import Iterable, List, Optional
 
-from web.config import DB_PATH, RUN_RETENTION, WEB_RESULTS_DIR
+from web.config import ALERT_DELIVERY_RETENTION, DB_PATH, RUN_RETENTION, WEB_RESULTS_DIR
 from web.serialize import jsonable
 
 logger = logging.getLogger('futuresview.web')
@@ -61,6 +61,47 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS alert_monitors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    strategy TEXT NOT NULL,
+    symbols_json TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    notify_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    last_snapshot_json TEXT,
+    last_checked_at REAL,
+    last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alert_monitors_created_at ON alert_monitors(created_at DESC);
+CREATE TABLE IF NOT EXISTS notify_channels (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notify_channels_created_at ON notify_channels(created_at DESC);
+CREATE TABLE IF NOT EXISTS alert_deliveries (
+    id TEXT PRIMARY KEY,
+    trigger TEXT NOT NULL,
+    scheduled_slot TEXT,
+    created_at REAL NOT NULL,
+    finished_at REAL,
+    status TEXT NOT NULL,
+    monitor_count INTEGER NOT NULL DEFAULT 0,
+    symbols_updated_json TEXT NOT NULL DEFAULT '[]',
+    data_warnings_json TEXT NOT NULL DEFAULT '[]',
+    results_json TEXT NOT NULL DEFAULT '[]',
+    summary TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_created_at ON alert_deliveries(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_deliveries_slot
+    ON alert_deliveries(scheduled_slot) WHERE scheduled_slot IS NOT NULL;
 """
 
 # Serialises every use of the shared connection, reads included. Python's
@@ -105,11 +146,24 @@ def _adopt_orphaned_runs(conn: sqlite3.Connection) -> None:
         ('The server exited while this run was still in flight; '
          'its result was never written.',),
     )
+    cur_deliveries = conn.execute(
+        "UPDATE alert_deliveries SET status='interrupted', finished_at=?, error=? "
+        "WHERE status='running'",
+        (
+            time.time(),
+            'The server exited while this alert dispatch was still in flight.',
+        ),
+    )
     conn.commit()
     if cur.rowcount:
         logger.warning(
             '%d run(s) were left in flight by a previous server process and have been '
             'marked interrupted.', cur.rowcount,
+        )
+    if cur_deliveries.rowcount:
+        logger.warning(
+            '%d alert delivery(ies) were left in flight by a previous server process '
+            'and have been marked interrupted.', cur_deliveries.rowcount,
         )
 
 
@@ -379,3 +433,368 @@ def delete_all_sessions() -> None:
         conn = _get_conn()
         conn.execute('DELETE FROM sessions')
         conn.commit()
+
+
+# ---------------------------------------------------------------------
+# Alert monitors, notification channels, and delivery logs
+# ---------------------------------------------------------------------
+
+def _monitor_to_dict(row: sqlite3.Row) -> dict:
+    return {
+        'id': row['id'],
+        'name': row['name'] or '',
+        'strategy': row['strategy'],
+        'symbols': json.loads(row['symbols_json']) if row['symbols_json'] else [],
+        'params': json.loads(row['params_json']) if row['params_json'] else {},
+        'notify_enabled': bool(row['notify_enabled']),
+        'created_at': float(row['created_at']),
+        'updated_at': float(row['updated_at']),
+        'last_snapshot': json.loads(row['last_snapshot_json']) if row['last_snapshot_json'] else None,
+        'last_checked_at': float(row['last_checked_at']) if row['last_checked_at'] is not None else None,
+        'last_error': row['last_error'],
+    }
+
+
+def list_alert_monitors(*, notify_only: bool = False) -> List[dict]:
+    with _lock:
+        conn = _get_conn()
+        if notify_only:
+            rows = conn.execute(
+                'SELECT * FROM alert_monitors WHERE notify_enabled=1 ORDER BY created_at DESC',
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                'SELECT * FROM alert_monitors ORDER BY created_at DESC',
+            ).fetchall()
+        return [_monitor_to_dict(r) for r in rows]
+
+
+def get_alert_monitor(monitor_id: str) -> Optional[dict]:
+    with _lock:
+        row = _get_conn().execute(
+            'SELECT * FROM alert_monitors WHERE id=?', (monitor_id,),
+        ).fetchone()
+    return None if row is None else _monitor_to_dict(row)
+
+
+def create_alert_monitor(
+    *,
+    strategy: str,
+    symbols: Iterable[str],
+    params: dict = None,
+    name: str = '',
+    notify_enabled: bool = True,
+    monitor_id: Optional[str] = None,
+    created_at: Optional[float] = None,
+) -> dict:
+    now = time.time()
+    mid = (monitor_id or '').strip() or uuid.uuid4().hex[:12]
+    ts_created = float(created_at) if created_at is not None else now
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            'INSERT INTO alert_monitors '
+            '(id, name, strategy, symbols_json, params_json, notify_enabled, created_at, updated_at) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (
+                mid,
+                (name or '').strip(),
+                strategy,
+                json.dumps(list(symbols)),
+                json.dumps(jsonable(params or {})),
+                1 if notify_enabled else 0,
+                ts_created,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute('SELECT * FROM alert_monitors WHERE id=?', (mid,)).fetchone()
+    return _monitor_to_dict(row)
+
+
+def update_alert_monitor(
+    monitor_id: str,
+    *,
+    strategy: str,
+    symbols: Iterable[str],
+    params: dict,
+    name: str = '',
+    notify_enabled: bool = True,
+    clear_snapshot: bool = False,
+) -> Optional[dict]:
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        existing = conn.execute(
+            'SELECT id FROM alert_monitors WHERE id=?', (monitor_id,),
+        ).fetchone()
+        if existing is None:
+            return None
+        if clear_snapshot:
+            conn.execute(
+                'UPDATE alert_monitors SET name=?, strategy=?, symbols_json=?, params_json=?, '
+                'notify_enabled=?, updated_at=?, last_snapshot_json=NULL, '
+                'last_checked_at=NULL, last_error=NULL WHERE id=?',
+                (
+                    (name or '').strip(),
+                    strategy,
+                    json.dumps(list(symbols)),
+                    json.dumps(jsonable(params or {})),
+                    1 if notify_enabled else 0,
+                    now,
+                    monitor_id,
+                ),
+            )
+        else:
+            conn.execute(
+                'UPDATE alert_monitors SET name=?, strategy=?, symbols_json=?, params_json=?, '
+                'notify_enabled=?, updated_at=? WHERE id=?',
+                (
+                    (name or '').strip(),
+                    strategy,
+                    json.dumps(list(symbols)),
+                    json.dumps(jsonable(params or {})),
+                    1 if notify_enabled else 0,
+                    now,
+                    monitor_id,
+                ),
+            )
+        conn.commit()
+        row = conn.execute('SELECT * FROM alert_monitors WHERE id=?', (monitor_id,)).fetchone()
+    return _monitor_to_dict(row)
+
+
+def record_alert_monitor_result(
+    monitor_id: str,
+    *,
+    snapshot: Optional[dict] = None,
+    error: Optional[str] = None,
+    checked_at: Optional[float] = None,
+) -> None:
+    ts = float(checked_at) if checked_at is not None else time.time()
+    with _lock:
+        conn = _get_conn()
+        if snapshot is not None:
+            conn.execute(
+                'UPDATE alert_monitors SET last_snapshot_json=?, last_checked_at=?, last_error=NULL '
+                'WHERE id=?',
+                (json.dumps(jsonable(snapshot)), ts, monitor_id),
+            )
+        else:
+            conn.execute(
+                'UPDATE alert_monitors SET last_checked_at=?, last_error=? WHERE id=?',
+                (ts, error, monitor_id),
+            )
+        conn.commit()
+
+
+def delete_alert_monitor(monitor_id: str) -> bool:
+    with _lock:
+        conn = _get_conn()
+        cur = conn.execute('DELETE FROM alert_monitors WHERE id=?', (monitor_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def _channel_to_dict(row: sqlite3.Row) -> dict:
+    return {
+        'id': row['id'],
+        'kind': row['kind'],
+        'name': row['name'],
+        'enabled': bool(row['enabled']),
+        'config': json.loads(row['config_json']) if row['config_json'] else {},
+        'created_at': float(row['created_at']),
+        'updated_at': float(row['updated_at']),
+    }
+
+
+def list_notify_channels(*, enabled_only: bool = False) -> List[dict]:
+    with _lock:
+        conn = _get_conn()
+        if enabled_only:
+            rows = conn.execute(
+                'SELECT * FROM notify_channels WHERE enabled=1 ORDER BY created_at DESC',
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                'SELECT * FROM notify_channels ORDER BY created_at DESC',
+            ).fetchall()
+        return [_channel_to_dict(r) for r in rows]
+
+
+def get_notify_channel(channel_id: str) -> Optional[dict]:
+    with _lock:
+        row = _get_conn().execute(
+            'SELECT * FROM notify_channels WHERE id=?', (channel_id,),
+        ).fetchone()
+    return None if row is None else _channel_to_dict(row)
+
+
+def create_notify_channel(
+    *, kind: str, name: str, config: dict, enabled: bool = True,
+) -> dict:
+    cid = uuid.uuid4().hex[:12]
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            'INSERT INTO notify_channels '
+            '(id, kind, name, enabled, config_json, created_at, updated_at) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (
+                cid,
+                kind,
+                name.strip(),
+                1 if enabled else 0,
+                json.dumps(jsonable(config)),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute('SELECT * FROM notify_channels WHERE id=?', (cid,)).fetchone()
+    return _channel_to_dict(row)
+
+
+def update_notify_channel(
+    channel_id: str, *, kind: str, name: str, config: dict, enabled: bool,
+) -> Optional[dict]:
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        existing = conn.execute(
+            'SELECT id FROM notify_channels WHERE id=?', (channel_id,),
+        ).fetchone()
+        if existing is None:
+            return None
+        conn.execute(
+            'UPDATE notify_channels SET kind=?, name=?, enabled=?, config_json=?, updated_at=? '
+            'WHERE id=?',
+            (
+                kind,
+                name.strip(),
+                1 if enabled else 0,
+                json.dumps(jsonable(config)),
+                now,
+                channel_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute('SELECT * FROM notify_channels WHERE id=?', (channel_id,)).fetchone()
+    return _channel_to_dict(row)
+
+
+def delete_notify_channel(channel_id: str) -> bool:
+    with _lock:
+        conn = _get_conn()
+        cur = conn.execute('DELETE FROM notify_channels WHERE id=?', (channel_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def _delivery_to_dict(row: sqlite3.Row) -> dict:
+    return {
+        'id': row['id'],
+        'trigger': row['trigger'],
+        'scheduled_slot': row['scheduled_slot'],
+        'created_at': float(row['created_at']),
+        'finished_at': float(row['finished_at']) if row['finished_at'] is not None else None,
+        'status': row['status'],
+        'monitor_count': int(row['monitor_count'] or 0),
+        'symbols_updated': json.loads(row['symbols_updated_json']) if row['symbols_updated_json'] else [],
+        'data_warnings': json.loads(row['data_warnings_json']) if row['data_warnings_json'] else [],
+        'results': json.loads(row['results_json']) if row['results_json'] else [],
+        'summary': row['summary'],
+        'error': row['error'],
+    }
+
+
+def _prune_deliveries_locked(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "DELETE FROM alert_deliveries "
+        "WHERE status != 'running' AND id NOT IN ("
+        '    SELECT id FROM alert_deliveries ORDER BY created_at DESC, rowid DESC LIMIT ?'
+        ')',
+        (ALERT_DELIVERY_RETENTION,),
+    )
+
+
+def claim_alert_delivery(
+    *, trigger: str, scheduled_slot: Optional[str] = None, monitor_count: int = 0,
+) -> Optional[str]:
+    """Create a delivery row; returns ``None`` if ``scheduled_slot`` is already claimed."""
+    did = uuid.uuid4().hex[:12]
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        try:
+            conn.execute(
+                'INSERT INTO alert_deliveries '
+                '(id, trigger, scheduled_slot, created_at, status, monitor_count) '
+                'VALUES (?,?,?,?,?,?)',
+                (did, trigger, scheduled_slot, now, 'running', int(monitor_count)),
+            )
+            _prune_deliveries_locked(conn)
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return None
+    return did
+
+
+def finish_alert_delivery(
+    delivery_id: str,
+    *,
+    status: str,
+    monitor_count: Optional[int] = None,
+    symbols_updated: Iterable[str] = (),
+    data_warnings: Iterable[str] = (),
+    results: Iterable[dict] = (),
+    summary: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    now = time.time()
+    with _lock:
+        conn = _get_conn()
+        if monitor_count is None:
+            conn.execute(
+                'UPDATE alert_deliveries SET finished_at=?, status=?, symbols_updated_json=?, '
+                'data_warnings_json=?, results_json=?, summary=?, error=? WHERE id=?',
+                (
+                    now,
+                    status,
+                    json.dumps(list(symbols_updated)),
+                    json.dumps(list(data_warnings)),
+                    json.dumps(jsonable(list(results))),
+                    summary,
+                    error,
+                    delivery_id,
+                ),
+            )
+        else:
+            conn.execute(
+                'UPDATE alert_deliveries SET finished_at=?, status=?, monitor_count=?, '
+                'symbols_updated_json=?, data_warnings_json=?, results_json=?, summary=?, '
+                'error=? WHERE id=?',
+                (
+                    now,
+                    status,
+                    int(monitor_count),
+                    json.dumps(list(symbols_updated)),
+                    json.dumps(list(data_warnings)),
+                    json.dumps(jsonable(list(results))),
+                    summary,
+                    error,
+                    delivery_id,
+                ),
+            )
+        conn.commit()
+
+
+def list_alert_deliveries(limit: int = 30) -> List[dict]:
+    with _lock:
+        rows = _get_conn().execute(
+            'SELECT * FROM alert_deliveries ORDER BY created_at DESC LIMIT ?',
+            (max(1, min(int(limit), ALERT_DELIVERY_RETENTION)),),
+        ).fetchall()
+    return [_delivery_to_dict(r) for r in rows]

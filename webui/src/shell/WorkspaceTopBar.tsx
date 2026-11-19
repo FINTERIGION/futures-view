@@ -1,7 +1,9 @@
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { alertsApi } from '../api/endpoints'
 import { Icon } from '../components/Icon'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { useJobs } from './JobsProvider'
+import { useJobs, type JobSlot } from './JobsProvider'
 import { useWorkspace } from './WorkspaceContext'
 
 const LANGS: { code: string; label: string }[] = [
@@ -9,32 +11,43 @@ const LANGS: { code: string; label: string }[] = [
   { code: 'zh', label: '中文' },
 ]
 
-const SLOT_LABEL_KEY = {
+const SLOT_LABEL_KEY: Record<JobSlot, string> = {
   backtest: 'workspace.tabBacktest',
   data: 'data.title',
   alert: 'workspace.tabAlert',
-} as const
+  dispatch: 'alerts.notify.jobLabel',
+}
 
 export function WorkspaceTopBar({
   productName,
+  onShowNotify,
   onShowShortcuts,
   onShowAccess,
 }: {
   productName?: string
+  onShowNotify: () => void
   onShowShortcuts: () => void
   onShowAccess: () => void
 }) {
   const { t, i18n } = useTranslation()
   const { chartSymbol, setDrawerTab, setDrawerCollapsed, setSidebarOpen } = useWorkspace()
   const jobs = useJobs()
+  const { data: schedule } = useQuery({
+    queryKey: ['alert-schedule'],
+    queryFn: alertsApi.getSchedule,
+  })
 
-  const activePills = (['backtest', 'data', 'alert'] as const)
+  const activePills = (['backtest', 'data', 'alert', 'dispatch'] as const)
     .map((slot) => ({ slot, state: jobs[slot].state }))
     .filter((j) => j.state && ['queued', 'running'].includes(j.state.status))
 
-  const openJob = (slot: 'backtest' | 'data' | 'alert') => {
+  const openJob = (slot: JobSlot) => {
     if (slot === 'data') {
       setSidebarOpen(true)
+      return
+    }
+    if (slot === 'dispatch') {
+      onShowNotify()
       return
     }
     setDrawerTab(slot === 'backtest' ? 'backtest' : 'alerts')
@@ -91,6 +104,20 @@ export function WorkspaceTopBar({
         </div>
 
         <div className="topbar-actions">
+          <button
+            className="btn btn-sm btn-ghost btn-icon topbar-notify-btn"
+            onClick={onShowNotify}
+            title={
+              schedule?.enabled && schedule.times.length > 0
+                ? t('alerts.notify.topbarActive', { times: schedule.times.join(', ') })
+                : t('alerts.notify.topbarTitle')
+            }
+            aria-label={t('alerts.notify.topbarTitle')}
+          >
+            <Icon name="bell" />
+            {schedule?.enabled && <span className="topbar-icon-dot" aria-hidden="true" />}
+          </button>
+
           <button
             className="btn btn-sm btn-ghost btn-icon"
             onClick={onShowAccess}

@@ -12,7 +12,17 @@ vi.mock('../api/endpoints', () => ({
   dataApi: { update: vi.fn() },
   strategiesApi: { list: vi.fn() },
   backtestApi: { start: vi.fn() },
-  alertsApi: { preview: vi.fn() },
+  alertsApi: {
+    preview: vi.fn(),
+    listMonitors: vi.fn(),
+    createMonitor: vi.fn(),
+    updateMonitor: vi.fn(),
+    deleteMonitor: vi.fn(),
+    importMonitors: vi.fn(),
+    getSchedule: vi.fn(),
+    listChannels: vi.fn(),
+    listDeliveries: vi.fn(),
+  },
   runsApi: { list: vi.fn(), get: vi.fn(), price: vi.fn(), remove: vi.fn() },
   jobsApi: { get: vi.fn(), cancel: vi.fn(), streamUrl: (id: string) => `/api/jobs/${id}/stream` },
   indicatorsApi: { list: vi.fn(), get: vi.fn(), values: vi.fn(), reload: vi.fn() },
@@ -28,6 +38,21 @@ beforeEach(() => {
   vi.mocked(productsApi.bars).mockResolvedValue({ symbol: 'SA', bars: [] })
   vi.mocked(productsApi.roll).mockResolvedValue({ symbol: 'SA', roll: [] })
   vi.mocked(strategiesApi.list).mockResolvedValue(STRATEGIES)
+  vi.mocked(alertsApi.listMonitors).mockResolvedValue([])
+  vi.mocked(alertsApi.importMonitors).mockResolvedValue({ imported: [], skipped: 0 })
+  vi.mocked(alertsApi.getSchedule).mockResolvedValue({
+    enabled: false,
+    times: ['15:30'],
+    timezone: 'Asia/Shanghai',
+    weekdays_only: true,
+    update_data: true,
+    language: 'zh',
+    next_run_at: null,
+    server_now: '2026-11-19T15:00:00+08:00',
+    scheduler_running: true,
+  })
+  vi.mocked(alertsApi.listChannels).mockResolvedValue([])
+  vi.mocked(alertsApi.listDeliveries).mockResolvedValue([])
   vi.mocked(runsApi.list).mockResolvedValue([runRow('run-a', ['SA', 'CF']), runRow('run-b', ['AG'])])
   vi.mocked(runsApi.get).mockImplementation(async (id: string) =>
     id === 'run-a' ? runDetail('run-a', ['SA', 'CF']) : runDetail('run-b', ['AG']),
@@ -250,10 +275,21 @@ describe('the product sidebar', () => {
 
   it('does not calculate a saved alert when the sidebar universe changes', async () => {
     const user = userEvent.setup()
-    localStorage.setItem(
-      'ft.alertEntries',
-      JSON.stringify([{ id: 'e1', strategy: 'double_ma', symbols: ['SA'], params: {}, createdAt: 1 }]),
-    )
+    vi.mocked(alertsApi.listMonitors).mockResolvedValue([
+      {
+        id: 'e1',
+        name: '',
+        strategy: 'double_ma',
+        symbols: ['SA'],
+        params: {},
+        notify_enabled: true,
+        created_at: 1,
+        updated_at: 1,
+        last_snapshot: null,
+        last_checked_at: null,
+        last_error: null,
+      },
+    ])
     localStorage.setItem('ft.alertActiveId', JSON.stringify('e1'))
 
     renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=alerts' })
@@ -264,6 +300,25 @@ describe('the product sidebar', () => {
 
     expect(within(cfRow).getByRole('checkbox')).toBeChecked()
     expect(alertsApi.preview).not.toHaveBeenCalled()
+  })
+
+  it('opens Alert Notifications and Keyboard Shortcuts as centered floating modals from the top-right bar', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+
+    await user.click(await screen.findByRole('button', { name: 'Alert notifications' }))
+    const notifyDialog = await screen.findByRole('dialog', { name: 'Alert Notifications' })
+    expect(notifyDialog).toHaveClass('modal')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Alert Notifications' })).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }))
+    const shortcutsDialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(shortcutsDialog).toHaveClass('modal', 'modal-sheet')
+    expect(shortcutsDialog.querySelector('.modal-footer')).toBeNull()
+    const header = shortcutsDialog.querySelector('.modal-header') as HTMLElement
+    await user.click(within(header).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).not.toBeInTheDocument())
   })
 
   it('single-clicking another product switches the main chart without altering universe checkboxes', async () => {

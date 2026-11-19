@@ -377,6 +377,26 @@ def cmd_web(args) -> None:
 
 
 # ---------------------------------------------------------------------
+# alert
+# ---------------------------------------------------------------------
+
+def cmd_alert(args) -> dict:
+    from web.alert_service import run_alert_dispatch
+
+    outcome = run_alert_dispatch(
+        trigger='cli',
+        update_data=not args.no_update,
+    )
+    logger.info('%s', outcome.get('summary') or outcome.get('status'))
+    for item in outcome.get('results') or []:
+        level = logger.info if item.get('ok') else logger.error
+        level('  [%s] %s (%s): %s', 'OK' if item.get('ok') else 'FAIL', item.get('channel_name'), item.get('kind'), item.get('detail'))
+    if outcome.get('status') == 'error':
+        raise RuntimeError(outcome.get('summary') or 'Alert delivery failed')
+    return outcome
+
+
+# ---------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------
 
@@ -466,6 +486,13 @@ def _parse_args(argv=None) -> argparse.Namespace:
         help='Forget the web access password and every login session, then start.',
     )
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser('alert', help='Update data, evaluate enabled signal monitors, and send notifications.')
+    p.add_argument(
+        '--no-update', action='store_true',
+        help='Skip exchange data refresh and evaluate from local CSVs.',
+    )
+    p.set_defaults(func=cmd_alert)
 
     return parser.parse_args(argv)
 

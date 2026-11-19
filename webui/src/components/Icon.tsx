@@ -38,6 +38,10 @@ export type IconName =
   | 'unlock'
   | 'refresh'
   | 'copy'
+  | 'bell'
+  | 'bell-off'
+  | 'send'
+  | 'clock'
 
 /** Path data only -- every icon shares the viewBox, stroke and cap settings
  * set on the <svg> below, which is what keeps the set looking like a set. */
@@ -66,6 +70,10 @@ const PATHS: Record<IconName, string> = {
   unlock: 'M5.2 7.2V5.4a2.8 2.8 0 0 1 5.2-1.4M3.6 7.2h8.8v6.4H3.6z',
   refresh: 'M13.2 5.2a5.6 5.6 0 1 0 .4 5.2M13.2 2.4v3.2H10',
   copy: 'M5.6 5.6V2.4h8v8h-3.2M2.4 5.6h8v8h-8z',
+  bell: 'M12 10.6V7a4 4 0 0 0-8 0v3.6L2.6 12h10.8L12 10.6M6.6 13.4a1.6 1.6 0 0 0 2.8 0',
+  'bell-off': 'M2.2 2.2 13.8 13.8M5.2 4.6A4 4 0 0 1 12 7v2.4M4 7.4v3.2L2.6 12h7.6M6.6 13.4a1.6 1.6 0 0 0 2.8 0',
+  send: 'M14 2 7.2 8.8M14 2 9.6 14 7.2 8.8 2 6.4 14 2',
+  clock: 'M8 2.2a5.8 5.8 0 1 0 0 11.6A5.8 5.8 0 0 0 8 2.2M8 4.8V8l2.4 1.6',
 }
 
 export function Icon({

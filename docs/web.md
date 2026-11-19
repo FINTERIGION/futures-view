@@ -7,6 +7,7 @@ Local FastAPI + React research workspace over the core backtest engine, data pip
 ```bash
 pip install -e ".[web]"
 python main.py web [--host 127.0.0.1] [--port 8888] [--reload] [--clear-password]
+python main.py alert [--no-update]   # run one-shot data update + signal check + third-party push
 ```
 
 | Flag | Default | Description |
@@ -30,7 +31,8 @@ cd webui && npm run dev                    # Vite dev server on :5173 (proxies /
 | **Product Sidebar** | View product data coverage (fresh / stale / empty), select charted product, toggle backtest universe checkboxes, trigger per-product or full data sync, add/edit product specs (`datafeed/products.json`) with roll-contract preview chart. |
 | **Main Chart** | OI-weighted daily candlesticks, roll markers, up to 4 stacked sub-pane indicators, and active backtest fills/equity overlay. |
 | **Indicators Picker** | Toggle discovered indicators, hot-reload `indicators/`, and edit tunable `space` parameters in place (persisted in browser `localStorage` under `ft.indicatorParams`). |
-| **Signals Tab** | Save strategy configurations and compute last-bar signal snapshots (`core.alert.run_alert_snapshot`): pending action, stop, and take-profit per product. Marked stale after data updates. |
+| **Signals Tab** | Save strategy configurations in SQLite (`results/webpanel.db`) and compute last-bar signal snapshots (`core.alert.run_alert_snapshot`): holding side, pending action, entry/last reference price, stop, and take-profit per product. Toggle per-row inclusion in scheduled push. |
+| **Alert Notifications Modal** | Opened from the top-right bell button (centered floating dialog alongside Web Access and Keyboard Shortcuts). Configure global weekday reminder time(s), Telegram Bot (with optional reverse-proxy API base & proxy) or Generic JSON Webhook channels, trigger manual update & push, and inspect delivery history. |
 | **Backtest Tab** | Run discovered strategies over selected universe and date window; view metrics, equity/drawdown curves, trade log, and breakdowns by symbol and exit reason. |
 | **History Tab** | Browse past runs stored in `results/webpanel.db`; click to overlay fills on the chart and restore form parameters, or delete runs. |
 
@@ -58,7 +60,12 @@ cd webui && npm run dev                    # Vite dev server on :5173 (proxies /
 | `/api/indicators`, `/api/indicators/reload` | `GET, POST` | Indicator catalog and module hot-reload |
 | `/api/products/{code}/indicators/{key}` | `GET` | Standalone indicator calculation (`?p=name=value`) |
 | `/api/backtest` | `POST` | Start background backtest job |
-| `/api/alerts/preview` | `POST` | Compute last-bar signal snapshot |
+| `/api/alerts/preview` | `POST` | Compute last-bar signal snapshot (optionally persisting onto a saved monitor) |
+| `/api/alerts/monitors`, `/api/alerts/monitors/{id}` | `GET, POST, PUT, DELETE` | Persistent signal monitor configurations (plus `POST /import` for legacy browser entries) |
+| `/api/alerts/channels`, `/api/alerts/channels/{id}` | `GET, POST, PUT, DELETE` | Pluggable third-party notification channels (Telegram Bot, Generic Webhook; secrets masked on read) |
+| `/api/alerts/channels/{id}/test` | `POST` | Send a sample test message through a configured channel |
+| `/api/alerts/schedule` | `GET, PUT` | Global weekday reminder times, timezone, data-sync option, and message language |
+| `/api/alerts/dispatch`, `/api/alerts/deliveries` | `POST, GET` | Trigger manual update-and-notify job and browse recent delivery audit logs |
 | `/api/runs`, `/api/runs/{run_id}` | `GET, DELETE` | Saved backtest runs |
 | `/api/runs/{run_id}/price/{symbol}` | `GET` | Per-symbol weighted and contract price series for a saved run |
 | `/api/jobs`, `/api/jobs/{job_id}/{stream,cancel}` | `GET, POST` | Background job status, SSE progress stream, and cancellation |

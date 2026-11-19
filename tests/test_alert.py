@@ -117,6 +117,9 @@ def test_double_ma_first_signal_on_an_uptrend_is_open_long():
     )
     row = _row(snap)
     assert row['operation'] == 'open_long'
+    assert row['holding'] == 'flat'
+    assert row['entry_price'] is None
+    assert row['last_price'] == pytest.approx(14.0)
     assert row['contract'] == 'SA509'
     assert snap['asof'] == '2024-01-05'
     assert snap['blown_up'] is False
@@ -129,7 +132,11 @@ def test_double_ma_stays_hold_after_the_uptrend_is_already_on():
         _price_market(closes), DoubleMaStrategy,
         {'fast_period': 3, 'slow_period': 5},
     )
-    assert _row(snap)['operation'] == 'hold'
+    row = _row(snap)
+    assert row['operation'] == 'hold'
+    assert row['holding'] == 'long'
+    assert row['entry_price'] == pytest.approx(15.0)
+    assert row['last_price'] == pytest.approx(17.0)
     _assert_no_lots(snap)
 
 
@@ -139,7 +146,11 @@ def test_double_ma_first_signal_on_a_downtrend_is_open_short():
         _price_market(closes), DoubleMaStrategy,
         {'fast_period': 3, 'slow_period': 5},
     )
-    assert _row(snap)['operation'] == 'open_short'
+    row = _row(snap)
+    assert row['operation'] == 'open_short'
+    assert row['holding'] == 'flat'
+    assert row['entry_price'] is None
+    assert row['last_price'] == pytest.approx(16.0)
     _assert_no_lots(snap)
 
 
@@ -152,7 +163,11 @@ def test_double_ma_cross_to_the_other_side_is_a_reverse():
         _price_market(closes), DoubleMaStrategy,
         {'fast_period': 3, 'slow_period': 5},
     )
-    assert _row(snap)['operation'] == 'reverse'
+    row = _row(snap)
+    assert row['operation'] == 'reverse'
+    assert row['holding'] == 'short'
+    assert row['entry_price'] == pytest.approx(100.0)
+    assert row['last_price'] == pytest.approx(200.0)
     _assert_no_lots(snap)
 
 
@@ -203,6 +218,9 @@ def test_empty_strategy_is_flat_with_the_calendar_contract():
     snap = run_alert_snapshot(_flat_market(4, contract='SAC1'), _Idle, {})
     row = _row(snap)
     assert row['operation'] == 'flat'
+    assert row['holding'] == 'flat'
+    assert row['entry_price'] is None
+    assert row['last_price'] == pytest.approx(100.0)
     assert row['contract'] == 'SAC1'
     assert row['stop'] == {'price': None, 'distance': None}
     assert row['take_profit'] == {'price': None, 'distance': None}

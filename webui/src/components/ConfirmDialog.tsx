@@ -43,8 +43,8 @@ export function ConfirmDialog({
 
   return createPortal(
     <>
-      <div className="drawer-backdrop" onClick={onCancel} />
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="drawer-backdrop backdrop-confirm" onClick={onCancel} />
+      <div className="modal modal-confirm" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-body">
           <h3>{title}</h3>
           {body && <p>{body}</p>}

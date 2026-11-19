@@ -1,11 +1,21 @@
 import { api } from './client'
 import type {
+  AlertDelivery,
+  AlertMonitor,
+  AlertMonitorImportItem,
+  AlertMonitorInput,
+  AlertSchedule,
+  AlertScheduleInput,
   Bar,
   Coverage,
+  DeliveryResult,
   ExchangeMeta,
   IndicatorInfo,
   IndicatorValues,
   JobState,
+  NotifyChannel,
+  NotifyChannelInput,
+  NotifyProviderInfo,
   Product,
   ProductInput,
   RollPoint,
@@ -105,10 +115,33 @@ export interface AlertPreviewParams {
   params?: Record<string, unknown>
   start?: string
   end?: string
+  monitor_id?: string
+}
+
+export interface AlertDispatchParams {
+  update_data?: boolean
+  monitor_ids?: string[]
+  channel_ids?: string[]
 }
 
 export const alertsApi = {
   preview: (body: AlertPreviewParams) => api.post<{ job_id: string }>('/alerts/preview', body),
+  listMonitors: () => api.get<AlertMonitor[]>('/alerts/monitors'),
+  createMonitor: (body: AlertMonitorInput) => api.post<AlertMonitor>('/alerts/monitors', body),
+  updateMonitor: (id: string, body: AlertMonitorInput) => api.put<AlertMonitor>(`/alerts/monitors/${seg(id)}`, body),
+  deleteMonitor: (id: string) => api.del<{ deleted: string }>(`/alerts/monitors/${seg(id)}`),
+  importMonitors: (entries: AlertMonitorImportItem[]) =>
+    api.post<{ imported: AlertMonitor[]; skipped: number }>('/alerts/monitors/import', { entries }),
+  listProviders: () => api.get<NotifyProviderInfo[]>('/alerts/channels/providers'),
+  listChannels: () => api.get<NotifyChannel[]>('/alerts/channels'),
+  createChannel: (body: NotifyChannelInput) => api.post<NotifyChannel>('/alerts/channels', body),
+  updateChannel: (id: string, body: NotifyChannelInput) => api.put<NotifyChannel>(`/alerts/channels/${seg(id)}`, body),
+  deleteChannel: (id: string) => api.del<{ deleted: string }>(`/alerts/channels/${seg(id)}`),
+  testChannel: (id: string) => api.post<DeliveryResult>(`/alerts/channels/${seg(id)}/test`),
+  getSchedule: () => api.get<AlertSchedule>('/alerts/schedule'),
+  updateSchedule: (body: AlertScheduleInput) => api.put<AlertSchedule>('/alerts/schedule', body),
+  dispatch: (body?: AlertDispatchParams) => api.post<{ job_id: string }>('/alerts/dispatch', body ?? {}),
+  listDeliveries: (limit = 30) => api.get<AlertDelivery[]>(`/alerts/deliveries?limit=${limit}`),
 }
 
 export const runsApi = {

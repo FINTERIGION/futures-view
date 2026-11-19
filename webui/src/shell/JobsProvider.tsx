@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react'
 import { useJob } from '../hooks/useJob'
 
-export type JobSlot = 'backtest' | 'data' | 'alert'
+export type JobSlot = 'backtest' | 'data' | 'alert' | 'dispatch'
 export type Job = ReturnType<typeof useJob>
 
 const JobsContext = createContext<Record<JobSlot, Job> | null>(null)
@@ -23,7 +23,8 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const backtest = useJob()
   const data = useJob()
   const alert = useJob()
-  return <JobsContext.Provider value={{ backtest, data, alert }}>{children}</JobsContext.Provider>
+  const dispatch = useJob()
+  return <JobsContext.Provider value={{ backtest, data, alert, dispatch }}>{children}</JobsContext.Provider>
 }
 
 export function useJobs(): Record<JobSlot, Job> {

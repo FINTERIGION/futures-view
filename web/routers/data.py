@@ -28,7 +28,7 @@ logger = logging.getLogger('futuresview.web')
 # the loser overwrites the winner with a frame built from a different fetch.
 # The pool runs two jobs at once, so clicking Update twice is enough to hit it.
 _inflight: set = set()
-_inflight_lock = threading.Lock()
+_inflight_lock = threading.Condition()
 
 
 @router.get('/coverage')
@@ -85,6 +85,7 @@ def start_update(body: DataUpdateRequest):
             # symbol permanently unclaimable for the life of the process.
             with _inflight_lock:
                 _inflight.difference_update(symbols)
+                _inflight_lock.notify_all()
             # Also on every exit: a run that fails on its third symbol has
             # already rewritten the first two's CSVs, and skipping this on the
             # raise left the panel serving their pre-update frames until the
@@ -99,5 +100,6 @@ def start_update(body: DataUpdateRequest):
     except Exception:
         with _inflight_lock:
             _inflight.difference_update(symbols)
+            _inflight_lock.notify_all()
         raise
     return {'job_id': job.id}
