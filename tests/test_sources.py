@@ -719,3 +719,81 @@ def test_czce_missing_history_year_is_a_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(sources, '_http_download', missing)
     src.sync()
     assert str(src.start_year) in src.failures
+
+
+def test_unsettled_no_data_day_is_not_permanently_blacklisted(tmp_path, monkeypatch):
+    """An unpublished trading day inside the refetch tail must NOT be recorded
+    in ``no_data`` when the exchange returns NoDataForDate."""
+    class _RecentStub(_DailyFileSource):
+        exchange = 'STUB_RECENT'
+        throttle = 0.0
+
+        def _fetch_day(self, day):
+            raise NoDataForDate(day.isoformat())
+
+        def _extract(self, payload, day):
+            return []
+
+    src = _RecentStub(
+        symbol='SA',
+        meta={'exchange': 'STUB_RECENT', 'start_year': TODAY.year},
+        cache_dir=str(tmp_path),
+    )
+    src.sync()
+    cal = src._read_calendar()
+    assert TODAY.isoformat() not in cal.get('no_data', [])
+
+
+def test_daily_source_fingerprint_changes_when_earlier_day_is_backfilled(tmp_path):
+    """If another product backfills an earlier day into the shared daily cache,
+    the fingerprint must change so CSVs get rebuilt."""
+    class _FpStub(_DailyFileSource):
+        exchange = 'STUB_FP'
+        throttle = 0.0
+
+        def _fetch_day(self, day):
+            return b'{}'
+
+        def _extract(self, payload, day):
+            return []
+
+    src = _FpStub(
+        symbol='SA',
+        meta={'exchange': 'STUB_FP', 'start_year': 2024},
+        cache_dir=str(tmp_path),
+    )
+    src._write_day(src.cache_path(date(2024, 1, 5)), b'{"a": 1}')
+    fp_before = src.fingerprint()
+
+    # Backfill an earlier day (e.g. from another product sharing the exchange dir)
+    src._write_day(src.cache_path(date(2024, 1, 3)), b'{"a": 2}')
+    fp_after = src.fingerprint()
+    assert fp_after != fp_before
+
+
+def test_czce_previous_year_cached_in_same_year_refreshes_after_new_year(tmp_path, monkeypatch):
+    """A CZCE year file last modified during that same year (e.g., Dec 20)
+    was only partial and must be re-fetched once the new year begins."""
+    src = make_source(sources._CzceSource, 'SA', tmp_path)
+    src.start_year = 2024
+    src.year = 2025
+    path_2024 = src.cache_path(2024)
+    os.makedirs(os.path.dirname(path_2024), exist_ok=True)
+    with open(path_2024, 'wb') as fh:
+        fh.write(b'partial-dec-2024')
+    # Set mtime to Dec 20, 2024
+    dec_2024 = pd.Timestamp('2024-12-20').timestamp()
+    os.utime(path_2024, (dec_2024, dec_2024))
+
+    fetched = []
+
+    def fake_download(url, dest, headers=None):
+        fetched.append(url)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, 'wb') as fh:
+            fh.write(b'full-year-data')
+
+    monkeypatch.setattr(sources, '_http_download', fake_download)
+    src.sync()
+    assert any('2024' in u for u in fetched)
+

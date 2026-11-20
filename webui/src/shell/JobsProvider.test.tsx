@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { MockEventSource } from '../test/setup'
-import { JobsProvider, useJobSlot } from './JobsProvider'
+import { JobsProvider } from './JobsProvider'
+import { useJobSlot } from './jobsStore'
 
 vi.mock('../api/endpoints', () => ({
   jobsApi: {

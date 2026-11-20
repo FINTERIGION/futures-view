@@ -30,21 +30,28 @@ describe('client api request', () => {
       new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     )
 
-    await api.post('/test', { foo: 'bar' })
+    await api.post('/test', { foo: 'bar' }, { headers: { 'X-Trace': 'abc' } })
     const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]
     const headers = init?.headers as Headers
     expect(headers.get('Content-Type')).toBe('application/json')
+    expect(headers.get('X-Trace')).toBe('abc')
   })
 
-  it('allows overriding Content-Type', async () => {
+  it('allows overriding Content-Type and forwarding AbortSignal', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     )
 
-    // Call request through custom header
-    await fetch('/api/test', {
-      headers: new Headers({ 'Content-Type': 'application/x-custom', 'X-Trace': '123' }),
+    const controller = new AbortController()
+    await api.get('/test', {
+      headers: { 'Content-Type': 'application/x-custom', 'X-Trace': '123' },
+      signal: controller.signal,
     })
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]
+    const headers = init?.headers as Headers
+    expect(headers.get('Content-Type')).toBe('application/x-custom')
+    expect(headers.get('X-Trace')).toBe('123')
+    expect(init?.signal).toBe(controller.signal)
   })
 
   it('handles 204 No Content returning undefined', async () => {

@@ -5,7 +5,7 @@ import { errorMessage } from '../api/client'
 import { indicatorsApi } from '../api/endpoints'
 import { Icon } from '../components/Icon'
 import type { IndicatorInfo } from '../api/types'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useWorkspace } from '../shell/workspaceStore'
 import { IndicatorParamsEditor } from './IndicatorParamsEditor'
 import { activeOverrides, editableParams, paramSummary } from './indicatorParams'
 
@@ -82,9 +82,13 @@ export function IndicatorPicker() {
     setEditing(null)
   }
 
-  // Counts volume too: the button is this menu's summary, and a count that
-  // ignored a ticked row would contradict the list it opens onto.
-  const count = indicators.length + (showVolume ? 1 : 0)
+  // Counts volume too, and filters out stale localStorage keys for deleted or
+  // broken indicators once the catalog has loaded so the badge agrees with the
+  // ticked rows shown inside the menu.
+  const activeIndicatorCount = catalog
+    ? indicators.filter((k) => catalog.some((c) => c.key === k && c.errors.length === 0)).length
+    : indicators.length
+  const count = activeIndicatorCount + (showVolume ? 1 : 0)
 
   // Grouped by where each one draws, not by where it came from. `pane` is the
   // class's own declaration and flips under a hot reload, so a row moves

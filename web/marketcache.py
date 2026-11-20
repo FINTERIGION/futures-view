@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import OrderedDict
-from typing import Tuple
+from typing import Optional, Tuple
 
 from core.market import MarketData, build_market_data
 from datafeed.data_manager import DataManager
@@ -23,7 +23,7 @@ from web.config import MARKET_CACHE_SIZE
 
 logger = logging.getLogger('futuresview.web')
 
-_Key = Tuple[Tuple[str, ...], str, str]
+_Key = Tuple[Tuple[str, ...], Optional[str], Optional[str]]
 
 
 def load_market(symbols, start: str, end: str, update: bool = False) -> MarketData:
@@ -39,42 +39,38 @@ class MarketCache:
         self._maxsize = maxsize
         self._store: "OrderedDict[_Key, MarketData]" = OrderedDict()
         self._lock = threading.Lock()
+        self._generation = 0
 
     @staticmethod
-    def _key(symbols, start: str, end: str) -> _Key:
-        """Symbols in the order given -- deliberately not sorted.
-
-        ``MarketData`` keeps its products in load order and the engine walks
-        them in that order, which decides who gets margin first when it binds.
-        A sorted key handed ``[CF, SA]`` whatever ``[SA, CF]`` had cached, so
-        one request could backtest differently depending on what ran before
-        it. Keyed on order, a request always gets the order it asked for --
-        the same answer ``main.py backtest`` gives for that ``--symbols``.
-        """
-        return (tuple(symbols), str(start), str(end))
+    def _key(symbols, start: Optional[str], end: Optional[str]) -> _Key:
+        """Symbols in the order given -- deliberately not sorted."""
+        return (tuple(symbols), start, end)
 
     def get(self, symbols, start: str, end: str, update: bool = False) -> MarketData:
         key = self._key(symbols, start, end)
-        if not update:
-            with self._lock:
+        with self._lock:
+            if not update:
                 hit = self._store.get(key)
                 if hit is not None:
                     self._store.move_to_end(key)
                     return hit
+            gen = self._generation
 
         market = load_market(symbols, start, end, update=update)
         with self._lock:
-            self._store[key] = market
-            self._store.move_to_end(key)
-            while len(self._store) > self._maxsize:
-                evicted_key, _ = self._store.popitem(last=False)
-                logger.debug('MarketCache: evicted %s', evicted_key)
+            if self._generation == gen:
+                self._store[key] = market
+                self._store.move_to_end(key)
+                while len(self._store) > self._maxsize:
+                    evicted_key, _ = self._store.popitem(last=False)
+                    logger.debug('MarketCache: evicted %s', evicted_key)
         return market
 
     def invalidate(self) -> None:
         """Drop everything -- called after a registry write or a data update,
         either of which can change what a cached ``MarketData`` reflects."""
         with self._lock:
+            self._generation += 1
             self._store.clear()
 
 

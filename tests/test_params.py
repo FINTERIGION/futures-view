@@ -140,3 +140,13 @@ def test_packaged_modules_do_not_import_top_level_scripts():
                     for name in names if name in top_level
                 ]
     assert not offenders, f'packaged modules importing unpackaged scripts: {offenders}'
+
+
+def test_coerce_param_uses_spec_type_over_default_type():
+    from core.params import Categorical, Float, Int, coerce_param
+
+    val_int = coerce_param('window', default=None, spec=Int(1, 10), value=5)
+    assert val_int == 5 and isinstance(val_int, int)
+    assert coerce_param('ratio', default=2, spec=Float(0.0, 10.0), value=2.5) == pytest.approx(2.5)
+    assert coerce_param('mode', default=None, spec=Categorical([None, 'ema']), value='null') is None
+

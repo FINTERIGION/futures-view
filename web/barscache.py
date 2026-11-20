@@ -29,7 +29,7 @@ from web.config import MARKET_CACHE_SIZE
 
 logger = logging.getLogger('futuresview.web')
 
-_Key = Tuple[str, str, str]
+_Key = Tuple[str, Optional[str], Optional[str]]
 
 #: Frames are far smaller than a ``MarketData`` panel and the fan-out is per
 #: *indicator*, not per run, so this holds more entries than the market cache.
@@ -41,10 +41,11 @@ class BarsCache:
         self._maxsize = maxsize
         self._store: "OrderedDict[_Key, object]" = OrderedDict()
         self._lock = threading.Lock()
+        self._generation = 0
 
     @staticmethod
     def _key(symbol: str, start: Optional[str], end: Optional[str]) -> _Key:
-        return (symbol, str(start), str(end))
+        return (symbol, start, end)
 
     def get(self, symbol: str, start: Optional[str] = None, end: Optional[str] = None):
         """The product's weighted daily frame. Raises whatever
@@ -56,25 +57,26 @@ class BarsCache:
             if hit is not None:
                 self._store.move_to_end(key)
                 return hit
+            gen = self._generation
 
         # Outside the lock: a slow read must not block every other symbol.
-        # Two concurrent misses on the same key both read and the second wins,
-        # which costs one redundant read and is always the same frame.
         df = DataManager(symbols=[symbol]).load_dataframe(
             start_date=start, end_date=end, symbol=symbol,
         )
         with self._lock:
-            self._store[key] = df
-            self._store.move_to_end(key)
-            while len(self._store) > self._maxsize:
-                evicted_key, _ = self._store.popitem(last=False)
-                logger.debug('BarsCache: evicted %s', evicted_key)
+            if self._generation == gen:
+                self._store[key] = df
+                self._store.move_to_end(key)
+                while len(self._store) > self._maxsize:
+                    evicted_key, _ = self._store.popitem(last=False)
+                    logger.debug('BarsCache: evicted %s', evicted_key)
         return df
 
     def invalidate(self) -> None:
         """Drop everything -- called after a registry write or a data update,
         either of which can change what a cached frame reflects."""
         with self._lock:
+            self._generation += 1
             self._store.clear()
 
 

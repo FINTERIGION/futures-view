@@ -6,8 +6,7 @@ import { AlertPanel } from '../panels/AlertPanel'
 import { BacktestPanel } from '../panels/BacktestPanel'
 import { HistoryPanel } from '../panels/HistoryPanel'
 import { useDrawerResize } from './useDrawerResize'
-import type { DrawerTab } from './WorkspaceContext'
-import { useWorkspace } from './WorkspaceContext'
+import { useWorkspace, type DrawerTab } from './workspaceStore'
 
 /**
  * Not a variant of `components/Drawer` -- that one is a modal, right-side

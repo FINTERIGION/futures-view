@@ -296,17 +296,22 @@ def run_alert_dispatch(
                     )
                     try:
                         with acquire_symbol(sym, cancel_event=cancel_event):
-                            updater = DataUpdate(normalize_symbol(sym))
-                            updater.update(force=False, rebuild_only=False)
                             touched_any = True
-                            updated_symbols.append(sym)
-                            if updater.stale_keys:
-                                stale_symbols.append(sym)
-                                data_warnings.append(
-                                    f'{sym} 有 {len(updater.stale_keys)} 项历史缓存未能刷新，数据可能滞后'
-                                    if language == 'zh' else
-                                    f'{sym}: {len(updater.stale_keys)} cache unit(s) failed to refresh',
-                                )
+                            try:
+                                updater = DataUpdate(normalize_symbol(sym))
+                                updater.update(force=False, rebuild_only=False)
+                                updated_symbols.append(sym)
+                                if updater.stale_keys:
+                                    stale_symbols.append(sym)
+                                    data_warnings.append(
+                                        f'{sym} 有 {len(updater.stale_keys)} 项历史缓存未能刷新，数据可能滞后'
+                                        if language == 'zh' else
+                                        f'{sym}: {len(updater.stale_keys)} cache unit(s) failed to refresh',
+                                    )
+                            finally:
+                                # Invalidate before releasing the per-symbol write lock.
+                                market_cache.invalidate()
+                                bars_cache.invalidate()
                     except Exception as exc:  # noqa: BLE001 -- per-symbol isolation
                         logger.warning('Alert data update failed for %s: %s', sym, exc)
                         failed_symbols[sym] = str(exc)
@@ -410,6 +415,8 @@ def run_alert_dispatch(
         results: List[dict] = []
         total_ch = len(channels)
         for idx, ch in enumerate(channels):
+            if job is not None and job.cancel_requested:
+                break
             _set_job_progress(
                 job,
                 0.85 + 0.14 * (idx / max(total_ch, 1)),
@@ -430,6 +437,24 @@ def run_alert_dispatch(
                     detail=f'{type(exc).__name__}: {exc}',
                 )
             results.append(res.to_dict())
+
+        if job is not None and job.cancel_requested:
+            summary = '已取消推送任务' if language == 'zh' else 'Alert dispatch cancelled'
+            store.finish_alert_delivery(
+                delivery_id,
+                status='cancelled',
+                monitor_count=len(monitors),
+                symbols_updated=updated_symbols,
+                data_warnings=data_warnings,
+                results=results,
+                summary=summary,
+            )
+            return {
+                'delivery_id': delivery_id,
+                'status': 'cancelled',
+                'summary': summary,
+                'results': results,
+            }
 
         ok_count = sum(1 for r in results if r['ok'])
         if ok_count == len(results):

@@ -6,10 +6,10 @@ Overview of the repository structure, module responsibilities, and verification 
 
 ```text
 futures-view/
-├── main.py                    # CLI entry point: data / backtest / web
+├── main.py                    # CLI entry point: data / backtest / alert / web
 ├── plotting.py                # Matplotlib chart generator for CLI backtests
 ├── core/                      # Backtest engine & shared primitives
-│   ├── types.py               #   Bar, Order, Fill, OrderType, Reason
+│   ├── types.py               #   Bar, Fill, Reason
 │   ├── market.py              #   MarketData, ProductPanel, ContractSeries
 │   ├── broker.py              #   Cash, positions, margin, commission, forced liquidation
 │   ├── ledger.py              #   Fill-driven logical trade ledger (TRADE_LOG_FIELDS)
@@ -42,10 +42,14 @@ futures-view/
 │   ├── app.py                 #   ASGI app, Host/Origin/Auth middlewares, static SPA mount
 │   ├── config.py              #   Paths, host/port defaults, allowlists
 │   ├── auth.py                #   Optional access password hashing, session cookies, rate limit
-│   ├── schemas.py             #   Pydantic request/response models
+│   ├── schemas.py             #   Pydantic request models
 │   ├── jobs.py                #   Thread-pool background job runner + SSE broadcaster
 │   ├── store.py               #   SQLite persistence (results/webpanel.db)
 │   ├── data_status.py         #   Per-product CSV coverage inspector
+│   ├── data_sync.py           #   Serialized per-symbol data update & cache invalidation
+│   ├── alert_service.py       #   Alert monitor evaluation & scheduled/manual dispatch
+│   ├── notifiers.py           #   Pluggable notification providers (Telegram, Generic Webhook)
+│   ├── scheduler.py           #   Background weekday reminder scheduler
 │   ├── serialize.py           #   JSON serializer (NaN/inf/date/numpy handling)
 │   ├── marketcache.py         #   LRU cache over MarketData bundles
 │   ├── barscache.py           #   LRU cache over DataManager DataFrames
@@ -57,9 +61,11 @@ futures-view/
 │       ├── auth/              #   Optional access-password gate, login screen, settings
 │       ├── chart/             #   Main super chart, toolbar, indicator picker & param editor
 │       ├── charts/            #   ECharts option builders
-│       ├── components/        #   Shared UI primitives (Card, Table, Drawer, Tabs, Toast, ...)
+│       ├── components/        #   Shared UI primitives (Card, Table, Drawer, Modal, ConfirmDialog, Tabs, Toast, ...)
+│       ├── hooks/             #   Shared hooks (useJob, useStickyState)
 │       ├── i18n/              #   en / zh locale resources
-│       ├── panels/            #   Bottom drawer tabs (backtest form/results, signals, history)
+│       ├── panels/            #   Bottom drawer tabs (backtest form/results, signals, history) & alert notify modal
+│       ├── products/          #   Product specification create/edit drawer & form
 │       ├── shell/             #   Workspace shell (top bar, sidebar, bottom drawer, shortcuts)
 │       └── theme/             #   Light/dark mode & categorical chart palette
 ├── tests/                     # Pytest suite (runs on synthetic MarketData fixtures)

@@ -292,3 +292,63 @@ def test_web_cli_accepts_clear_password():
     args = main._parse_args(['web', '--clear-password'])
     assert args.clear_password
     assert not main._parse_args(['web']).clear_password
+
+
+def test_disallowed_host_is_400_even_when_password_is_set(client):
+    """HostHeaderMiddleware must sit outside AuthMiddleware so requests with
+    an untrusted Host are rejected as 400 rather than leaking 401."""
+    client.put('/api/auth/password', json={'password': 'correct-horse'})
+    evil = TestClient(app, base_url='http://evil.example')
+    resp = evil.get('/api/products')
+    assert resp.status_code == 400
+
+
+def test_non_ascii_session_cookie_is_401_not_500(client):
+    import asyncio
+
+    client.put('/api/auth/password', json={'password': 'correct-horse'})
+    assert auth_module.is_authenticated('非ASCII会话') is False
+
+    # Raw ASGI request carrying non-ASCII latin-1 cookie bytes (valid in HTTP
+    # headers) used to crash _token_hash with UnicodeEncodeError (500).
+    responses = []
+
+    async def _call():
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'GET',
+            'scheme': 'http',
+            'path': '/api/products',
+            'raw_path': b'/api/products',
+            'query_string': b'',
+            'headers': [
+                (b'host', b'localhost'),
+                (b'cookie', f'{auth_module.COOKIE_NAME}='.encode('ascii') + b'\xe9\xe8'),
+            ],
+            'client': ('127.0.0.1', 12345),
+            'server': ('localhost', 80),
+        }
+
+        async def receive():
+            return {'type': 'http.request', 'body': b'', 'more_body': False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+
+    asyncio.run(_call())
+    start_msg = next(m for m in responses if m['type'] == 'http.response.start')
+    assert start_msg['status'] == 401
+
+
+def test_password_change_is_rate_limited_on_wrong_current(client):
+    client.put('/api/auth/password', json={'password': 'correct-horse'})
+    for _ in range(auth_module.LOGIN_MAX_FAILURES):
+        resp = client.put('/api/auth/password', json={'current': 'wrong-pass', 'password': 'new-password-1'})
+        assert resp.status_code == 403
+    blocked = client.put('/api/auth/password', json={'current': 'correct-horse', 'password': 'new-password-1'})
+    assert blocked.status_code == 429
+

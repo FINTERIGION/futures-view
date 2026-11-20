@@ -5,12 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date as Date
 from enum import Enum
-from typing import NamedTuple, Optional
-
-
-class OrderType(Enum):
-    MARKET = 'market'
-    STOP = 'stop'
+from typing import NamedTuple
 
 
 class Reason(Enum):
@@ -31,20 +26,6 @@ class Bar(NamedTuple):
     settle: float
     volume: float
     oi: float
-
-
-@dataclass
-class Order:
-    """A pending order. ``size`` is signed: positive = buy, negative = sell.
-
-    Submitted during the SIGNAL phase of bar ``i``; fills at the OPEN of bar
-    ``i + 1`` against that day's active calendar contract for ``symbol``.
-    """
-    symbol: str
-    size: int
-    order_type: OrderType = OrderType.MARKET
-    price: Optional[float] = None       # stop price; ignored for MARKET orders
-    reason: Reason = Reason.SIGNAL
 
 
 @dataclass

@@ -1,17 +1,19 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { productsApi } from '../api/endpoints'
 import { AccessDrawer } from '../auth/AccessDrawer'
 import { SuperChart } from '../chart/SuperChart'
 import { Icon } from '../components/Icon'
+import { useToast } from '../components/toastStore'
 import { AlertNotifyModal } from '../panels/AlertNotifyModal'
 import { ProductDrawer } from '../products/ProductDrawer'
 import { BottomDrawer } from './BottomDrawer'
+import { useJobLifecycle, useJobs } from './jobsStore'
 import { ShortcutsSheet } from './ShortcutsSheet'
 import { SymbolSidebar } from './SymbolSidebar'
 import { useHotkeys } from './useHotkeys'
-import { useWorkspace } from './WorkspaceContext'
+import { useWorkspace } from './workspaceStore'
 import { WorkspaceTopBar } from './WorkspaceTopBar'
 
 function CollapsedSidebarRail({ onExpand, universeCount }: { onExpand: () => void; universeCount: number }) {
@@ -42,6 +44,10 @@ function CollapsedSidebarRail({ onExpand, universeCount }: { onExpand: () => voi
  */
 export function ChartWorkspace() {
   const { t, i18n } = useTranslation()
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const jobs = useJobs()
+  const lifecycle = useJobLifecycle()
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -50,6 +56,7 @@ export function ChartWorkspace() {
     drawerHeight,
     chartSymbol,
     universe,
+    setRunId,
     editingProduct,
     setEditingProduct,
   } = useWorkspace()
@@ -87,10 +94,50 @@ export function ChartWorkspace() {
     '?': () => setShortcutsOpen(true),
   })
 
+  // Central completion observer for backtest & data jobs so outcomes are still
+  // handled (cache invalidation, run overlay, single toast) even when
+  // `BacktestPanel` or `SymbolSidebar` is unmounted behind a tab switch or
+  // collapsed pane. Shares `lifecycle` with those panels so remounting them
+  // never duplicates toasts or refetches.
+  const backtestState = jobs.backtest.state
+  useEffect(() => {
+    if (!backtestState || !['done', 'error'].includes(backtestState.status)) return
+    if (lifecycle.claimAnnouncement(`backtest:${backtestState.id}`)) {
+      if (backtestState.status === 'done') void queryClient.invalidateQueries({ queryKey: ['runs'] })
+      if (backtestState.status === 'error') {
+        toast.push({ kind: 'error', title: t('backtest.runFailed'), message: backtestState.error ?? undefined })
+      } else {
+        toast.push({ kind: 'success', title: t('backtest.runFinished') })
+      }
+    }
+    if (backtestState.status === 'done') {
+      const fallbackRunId = (backtestState.result as { run_id?: string } | undefined)?.run_id ?? null
+      const overlayRunId = lifecycle.claimBacktestOverlay(fallbackRunId)
+      if (overlayRunId) setRunId(overlayRunId)
+    }
+  }, [backtestState, lifecycle, queryClient, setRunId, toast, t])
+
+  const dataState = jobs.data.state
+  useEffect(() => {
+    if (!dataState || !['done', 'error', 'cancelled'].includes(dataState.status)) return
+    if (!lifecycle.claimAnnouncement(`data:${dataState.id}:${dataState.status}`)) return
+    void queryClient.invalidateQueries({ queryKey: ['products'] })
+    void queryClient.invalidateQueries({ queryKey: ['product-bars'] })
+    void queryClient.invalidateQueries({ queryKey: ['product-roll'] })
+    void queryClient.invalidateQueries({ queryKey: ['indicator'] })
+    if (dataState.status === 'done') {
+      toast.push({ kind: 'success', title: t('data.updateDone') })
+    }
+  }, [dataState, lifecycle, queryClient, toast, t])
+
   useEffect(() => {
     if (!sidebarOpen) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && window.matchMedia?.('(max-width: 900px)').matches) {
+      if (
+        event.key === 'Escape' &&
+        !document.querySelector('[role="dialog"][aria-modal="true"]') &&
+        window.matchMedia?.('(max-width: 900px)').matches
+      ) {
         setSidebarOpen(false)
       }
     }

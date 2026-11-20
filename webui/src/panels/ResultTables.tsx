@@ -63,7 +63,7 @@ export function ResultTables({ run }: { run: RunDetail }) {
   const bySymbol = (run.metrics?.['by_symbol'] as Record<string, Record<string, number>>) ?? {}
   const byExit = (run.metrics?.['by_exit_reason'] as Record<string, Record<string, number>>) ?? {}
   const bySymbolKeys = Object.keys(bySymbol)
-  const activeStatSymbol = statSymbol ?? bySymbolKeys[0] ?? null
+  const activeStatSymbol = statSymbol && statSymbol in bySymbol ? statSymbol : (bySymbolKeys[0] ?? null)
 
   return (
     <div>

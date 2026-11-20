@@ -70,7 +70,10 @@ class DataUpdateRequest(BaseModel):
 # rather than clamped, because a caller who asked for -50 asked for something
 # that cannot be honoured, and silently substituting 0 would hand them numbers
 # for a run they did not request.
-_SLIPPAGE = Field(default=0.0, ge=0, description='Per-fill slippage; a cost, so it cannot be negative.')
+_SLIPPAGE = Field(
+    default=0.0, ge=0, allow_inf_nan=False,
+    description='Per-fill slippage; a cost, so it cannot be negative.',
+)
 
 
 class BacktestRequest(BaseModel):
@@ -160,7 +163,7 @@ class AlertMonitorImportItem(BaseModel):
     symbols: List[str] = Field(default_factory=list)
     params: Dict[str, object] = Field(default_factory=dict)
     notify_enabled: bool = True
-    created_at: Optional[float] = None
+    created_at: Optional[float] = Field(default=None, allow_inf_nan=False)
 
 
 class AlertMonitorImportRequest(BaseModel):

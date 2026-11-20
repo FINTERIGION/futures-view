@@ -10,6 +10,7 @@ an order lands on.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Optional
 
 import numpy as np
@@ -341,20 +342,28 @@ class BarContext:
         because this is called per bar per symbol: run with ``--verbose`` when
         a strategy trades less than expected.
         """
-        if stop_distance <= 0:
-            logger.debug('%s: stop_distance=%s is not positive; 0 lots', sym, stop_distance)
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
+            logger.debug('%s: stop_distance=%s is not positive/finite; 0 lots', sym, stop_distance)
+            return 0
+        if not math.isfinite(risk_pct) or risk_pct <= 0:
+            logger.debug('%s: risk_pct=%s is not positive/finite; 0 lots', sym, risk_pct)
             return 0
         multiplier = product_costs(sym)['multiplier']
         per_lot_risk = stop_distance * multiplier
-        if per_lot_risk <= 0:
+        if not math.isfinite(per_lot_risk) or per_lot_risk <= 0:
             logger.debug('%s: per-lot risk=%s is not positive; 0 lots', sym, per_lot_risk)
             return 0
-        risk_amount = self.equity * risk_pct
+        equity = self.equity
+        if not math.isfinite(equity) or equity <= 0:
+            logger.debug('%s: equity=%s is not positive; 0 lots', sym, equity)
+            return 0
+        risk_amount = equity * risk_pct
         lots = int(risk_amount // per_lot_risk)
-        if lots == 0:
+        if lots <= 0:
             logger.debug(
                 '%s: risk budget %.2f is under one lot (stop %.4f x multiplier %s '
                 '= %.2f per lot); 0 lots',
                 sym, risk_amount, stop_distance, multiplier, per_lot_risk,
             )
+            return 0
         return lots

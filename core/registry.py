@@ -103,7 +103,9 @@ def discover_subclasses(
             if name not in found:
                 found[name] = obj
             elif found[name] is not obj:  # an alias (`Foo2 = Foo`) is one class, not a clash
-                clashes.setdefault(name, [found[name]]).append(obj)
+                bucket = clashes.setdefault(name, [found[name]])
+                if obj not in bucket:
+                    bucket.append(obj)
 
     for name, classes in clashes.items():
         del found[name]

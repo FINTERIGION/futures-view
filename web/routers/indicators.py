@@ -13,11 +13,12 @@ class contract and ``docs/indicator.md`` for the user-facing version.
 from __future__ import annotations
 
 import inspect
+import threading
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 
-from datafeed.products import PRODUCTS, normalize_symbol
+from datafeed.products import get_product, normalize_symbol
 from indicators import discover_indicators, load_registered_indicator
 from indicators.base import (
     Indicator,
@@ -162,33 +163,29 @@ def get_indicator(key: str):
     return jsonable(_describe(key, cls))
 
 
+_reload_lock = threading.Lock()
+
+
 @router.post('/indicators/reload')
 def reload_indicators():
     """Re-import every module under ``indicators/`` so an edit shows up
     without restarting the server.
 
-    Deliberately *not* guarded by the ``any_active()`` 409 that
-    ``strategies/reload`` uses. That guard exists because a running backtest
-    holds a ``Strategy`` class object and reloading would swap it mid-run;
-    nothing holds an ``Indicator`` across a request, so refusing while a data
-    download happens to be running would be a restriction with no reason
-    behind it.
-
-    ``indicators.base`` is kept, and a renamed or deleted class really goes
-    away -- see :func:`core.registry.reload_package` for both. A module that
-    fails to import is reported in ``failed`` rather than 500ing the reload,
-    and stays out of ``sys.modules``, so the catalog reports it broken rather
-    than going on drawing the pre-edit version -- the opposite of what someone
-    clicking Reload is asking for.
+    Serialised by ``_reload_lock`` so concurrent reloads or indicator lookups
+    never observe a half-reloaded ``sys.modules`` table, and surfaces both
+    import errors and short-name clashes in ``failed``.
     """
     failed: dict = {}
 
     def record(mod_name: str, exc: Exception) -> None:
         failed[mod_name] = f'{type(exc).__name__}: {exc}'
 
-    reload_package('indicators', Indicator, on_error=record)
-
-    found = discover_indicators()
+    with _reload_lock:
+        reload_package('indicators', Indicator, on_error=record)
+        discovery_errors: dict = {}
+        found = discover_indicators(errors=discovery_errors)
+        for mod_name, message in discovery_errors.items():
+            failed.setdefault(mod_name, message)
     return jsonable({'reloaded': True, 'indicators': sorted(found), 'failed': failed})
 
 
@@ -274,13 +271,16 @@ def product_indicator(
     anything reserved later.
     """
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
-
     try:
-        cls = load_registered_indicator(key)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        get_product(code)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}') from None
+
+    with _reload_lock:
+        try:
+            cls = load_registered_indicator(key)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     params = _overrides(cls, p)
 
@@ -311,9 +311,18 @@ def product_indicator(
             detail=f'{cls.__name__}.compute returned {type(computed).__name__}, expected a dict',
         )
 
+    try:
+        spec_outputs = declared_outputs(cls)
+        base_params = dict(getattr(cls, 'params', {}) or {})
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=422,
+            detail=f'{cls.__name__} declaration error: {type(e).__name__}: {e}',
+        ) from e
+
     n_bars = len(df)
     outputs = {}
-    for out in declared_outputs(cls):
+    for out in spec_outputs:
         if out.key not in computed:
             raise HTTPException(
                 status_code=422,
@@ -325,7 +334,7 @@ def product_indicator(
     return jsonable({
         'symbol': code,
         'indicator': key,
-        'params': {**dict(getattr(cls, 'params', {}) or {}), **params},
+        'params': {**base_params, **params},
         # Dates travel with the values so the chart can align by date rather
         # than by position: bars and values are two requests with independently
         # defaulted start/end, and positional alignment would misplace every

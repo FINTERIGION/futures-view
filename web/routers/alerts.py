@@ -4,6 +4,7 @@ global weekday reminder schedule, and delivery audit logs.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -73,6 +74,18 @@ def start_alert_preview(body: AlertPreviewRequest):
 
     monitor_id = body.monitor_id
 
+    def _monitor_still_matches() -> bool:
+        if not monitor_id:
+            return False
+        mon = store.get_alert_monitor(monitor_id)
+        if mon is None:
+            return False
+        return (
+            mon['strategy'] == body.strategy
+            and mon['symbols'] == symbols
+            and (mon.get('params') or {}) == params
+        )
+
     def run(job):
         job.message = 'Loading market data'
         try:
@@ -81,12 +94,12 @@ def start_alert_preview(body: AlertPreviewRequest):
             job.progress = 0.3
             job.message = f'Previewing {strategy_cls.__name__}'
             snapshot = run_alert_snapshot(market, strategy_cls, params)
-            if monitor_id:
+            if _monitor_still_matches():
                 store.record_alert_monitor_result(monitor_id, snapshot=snapshot)
             job.progress = 1.0
             return jsonable(snapshot)
         except Exception as exc:
-            if monitor_id:
+            if _monitor_still_matches():
                 store.record_alert_monitor_result(monitor_id, error=str(exc))
             raise
 
@@ -109,7 +122,8 @@ def import_monitors(body: AlertMonitorImportRequest):
     imported = []
     skipped = 0
     for item in body.entries:
-        if item.id and store.get_alert_monitor(item.id) is not None:
+        clean_id = (item.id or '').strip() or None
+        if clean_id and store.get_alert_monitor(clean_id) is not None:
             skipped += 1
             continue
         if not item.symbols:
@@ -126,15 +140,19 @@ def import_monitors(body: AlertMonitorImportRequest):
         if created_at is not None and created_at > 1e12:
             # Browser Date.now() is milliseconds; store uses UNIX seconds.
             created_at = created_at / 1000.0
-        row = store.create_alert_monitor(
-            monitor_id=item.id,
-            name=item.name,
-            strategy=item.strategy,
-            symbols=symbols,
-            params=params,
-            notify_enabled=item.notify_enabled,
-            created_at=created_at,
-        )
+        try:
+            row = store.create_alert_monitor(
+                monitor_id=clean_id,
+                name=item.name,
+                strategy=item.strategy,
+                symbols=symbols,
+                params=params,
+                notify_enabled=item.notify_enabled,
+                created_at=created_at,
+            )
+        except sqlite3.IntegrityError:
+            skipped += 1
+            continue
         imported.append(row)
     return jsonable({'imported': imported, 'skipped': skipped})
 
@@ -184,6 +202,8 @@ def update_monitor(monitor_id: str, body: AlertMonitorRequest):
         notify_enabled=body.notify_enabled,
         clear_snapshot=changed,
     )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f'Unknown alert monitor {monitor_id!r}')
     return jsonable(row)
 
 
@@ -244,6 +264,8 @@ def update_channel(channel_id: str, body: NotifyChannelRequest):
         config=cleaned,
         enabled=body.enabled,
     )
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f'Unknown notification channel {channel_id!r}')
     return jsonable(mask_channel(channel))
 
 
@@ -262,11 +284,12 @@ def test_channel(channel_id: str):
 
     schedule = get_schedule()
     language = schedule['language']
+    tz = resolve_timezone(schedule['timezone'])
     delivery_id = store.claim_alert_delivery(trigger='test', monitor_count=0)
     try:
         provider = get_provider(channel['kind'])
         result = provider.send_test(
-            channel['id'], channel['name'], channel['config'], language=language,
+            channel['id'], channel['name'], channel['config'], language=language, tz=tz,
         )
     except Exception as exc:  # noqa: BLE001
         if delivery_id is not None:

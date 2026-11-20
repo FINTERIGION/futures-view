@@ -28,16 +28,27 @@ export function ConfirmDialog({
 }) {
   const { t } = useTranslation()
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const onCancelRef = useRef(onCancel)
+  useEffect(() => {
+    onCancelRef.current = onCancel
+  })
 
   useEffect(() => {
     if (!open) return
+    const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     cancelRef.current?.focus()
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation()
+        onCancelRef.current()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, onCancel])
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      prevFocus?.focus()
+    }
+  }, [open])
 
   if (!open) return null
 

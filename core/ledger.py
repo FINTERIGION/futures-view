@@ -73,7 +73,10 @@ class Ledger:
         self._net[symbol] = new
         forced = fill.reason == Reason.LIQUIDATION
 
-        close_qty = min(abs(prev), abs(fill.size))
+        if prev != 0 and (prev > 0) != (fill.size > 0):
+            close_qty = min(abs(prev), abs(fill.size))
+        else:
+            close_qty = 0
         total_qty = abs(fill.size)
         open_qty = total_qty - close_qty
         close_comm = fill.commission * close_qty / total_qty if total_qty else 0.0

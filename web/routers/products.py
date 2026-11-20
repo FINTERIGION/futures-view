@@ -13,7 +13,6 @@ from datafeed.data_manager import DataManager
 from datafeed.products import (
     DEFAULT_MAIN_MONTHS,
     DEFAULT_ROLL_LEAD_MONTHS,
-    PRODUCTS,
     SUPPORTED_EXCHANGES,
     get_product,
     list_products,
@@ -33,14 +32,12 @@ from web.serialize import jsonable
 router = APIRouter(prefix='/api', tags=['products'])
 
 
-def _write_registry(registry: dict) -> None:
-    """Persist the registry, but only while nothing is mid-run.
+def _mutate_registry(mutator) -> None:
+    """Run ``mutator(registry_copy)`` and persist atomically while no job runs.
 
-    The check and the write happen inside ``hold_starts`` so no job can begin
-    between them: the engine reads ``product_costs``/``roll_rule`` live, per
-    fill (``core/broker.py``, ``core/ledger.py``), so a multiplier or margin
-    edit landing on a run already in flight silently corrupts that run's
-    numbers rather than failing.
+    Reading ``PRODUCTS``, mutating, writing ``products.json``, and invalidating
+    both caches all execute inside ``hold_starts`` so concurrent edits cannot
+    clobber each other and no newly started job can read stale cached frames.
     """
     with job_manager.hold_starts():
         if job_manager.any_active():
@@ -50,12 +47,14 @@ def _write_registry(registry: dict) -> None:
                        'data update is in progress, because the engine reads costs and '
                        'roll rules live, per fill.',
             )
+        registry = {code: get_product(code) for code in list_products()}
+        mutator(registry)
         try:
             save_registry(registry)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
-    market_cache.invalidate()
-    bars_cache.invalidate()
+        market_cache.invalidate()
+        bars_cache.invalidate()
 
 
 def _product_view(code: str) -> dict:
@@ -77,55 +76,58 @@ def list_all_products():
 @router.get('/products/{code}')
 def get_one_product(code: str):
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
-    return _product_view(code)
+    try:
+        return _product_view(code)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}') from None
 
 
 @router.post('/products/{code}', status_code=201)
 def create_product(code: str, body: ProductIn):
-    """``code`` in the path, matching PUT and DELETE.
-
-    It used to be a query parameter here alone -- the same identifier
-    addressed two different ways depending on the verb.
-    """
+    """``code`` in the path, matching PUT and DELETE."""
     code = normalize_symbol(code)
-    if code in PRODUCTS:
-        raise HTTPException(status_code=409, detail=f'{code} already exists; use PUT to edit it')
 
-    registry = dict(PRODUCTS)
-    registry[code] = body.to_registry_entry()
-    _write_registry(registry)
+    def _add(registry: dict) -> None:
+        if code in registry:
+            raise HTTPException(status_code=409, detail=f'{code} already exists; use PUT to edit it')
+        registry[code] = body.to_registry_entry()
+
+    _mutate_registry(_add)
     return _product_view(code)
 
 
 @router.put('/products/{code}')
 def update_product(code: str, body: ProductIn):
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
 
-    registry = dict(PRODUCTS)
-    registry[code] = body.to_registry_entry()
-    _write_registry(registry)
+    def _edit(registry: dict) -> None:
+        if code not in registry:
+            raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
+        registry[code] = body.to_registry_entry()
+
+    _mutate_registry(_edit)
     return _product_view(code)
 
 
 @router.delete('/products/{code}')
 def delete_product(code: str, purge_data: bool = Query(False)):
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
 
-    registry = dict(PRODUCTS)
-    del registry[code]
-    _write_registry(registry)
+    def _remove(registry: dict) -> None:
+        if code not in registry:
+            raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
+        del registry[code]
+
+    _mutate_registry(_remove)
 
     removed = []
     if purge_data:
         for path in data_file_paths(code):
-            os.remove(path)
-            removed.append(path)
+            try:
+                os.remove(path)
+                removed.append(path)
+            except FileNotFoundError:
+                pass
 
     return {'deleted': code, 'purged_files': removed}
 
@@ -133,8 +135,10 @@ def delete_product(code: str, purge_data: bool = Query(False)):
 @router.get('/products/{code}/bars')
 def product_bars(code: str, start: str = None, end: str = None):
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
+    try:
+        get_product(code)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}') from None
     try:
         df = bars_cache.get(code, start, end)
     except FileNotFoundError as e:
@@ -152,12 +156,16 @@ def product_bars(code: str, start: str = None, end: str = None):
 @router.get('/products/{code}/roll')
 def product_roll(code: str, start: str = None, end: str = None):
     code = normalize_symbol(code)
-    if code not in PRODUCTS:
-        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}')
+    try:
+        get_product(code)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f'Unknown product {code!r}') from None
     try:
         dm = DataManager(symbols=[code])
         bundle = dm.get_universe_bundle(start_date=start, end_date=end)
-    except (FileNotFoundError, ValueError) as e:
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     exec_df = bundle['products'][code]['exec_price_df']

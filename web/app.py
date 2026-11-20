@@ -12,13 +12,15 @@ import logging
 import os
 from typing import Optional
 
+import anyio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 
-from web.auth import COOKIE_NAME, is_authenticated, is_public_path, password_is_set
+from web import store
+from web.auth import COOKIE_NAME, is_authenticated, is_public_path
 from web.config import (
     DEV_ORIGINS, DISABLE_SCHEDULER_ENV, STATIC_DIR, UNSAFE_METHODS, allowed_hosts,
     allowed_origins, host_allowed, is_within, write_origin_allowed,
@@ -27,6 +29,10 @@ from web.routers import alerts, auth, backtest, data, indicators, jobs, products
 from web.scheduler import scheduler as alert_scheduler
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(message)s')
+# Prevent httpx/httpcore from logging full outbound URLs (which include
+# Telegram bot tokens in the path) at INFO level.
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 
 @contextlib.asynccontextmanager
@@ -38,6 +44,7 @@ async def _lifespan(_app: FastAPI):
         yield
     finally:
         alert_scheduler.stop()
+        store.close()
 
 
 app = FastAPI(title='FuturesView Web Panel', lifespan=_lifespan)
@@ -112,15 +119,20 @@ class AuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http':
+        scope_type = scope['type']
+        if scope_type not in ('http', 'websocket'):
             await self.app(scope, receive, send)
             return
-        if not password_is_set() or is_public_path(scope.get('path', '')):
+        if scope_type == 'http' and is_public_path(scope.get('path', '')):
             await self.app(scope, receive, send)
             return
-        token = _cookie_value(Headers(scope=scope).get('cookie', ''), COOKIE_NAME)
-        if is_authenticated(token):
+        cookie_headers = Headers(scope=scope).getlist('cookie')
+        token = _cookie_value('; '.join(cookie_headers), COOKIE_NAME)
+        if await anyio.to_thread.run_sync(is_authenticated, token):
             await self.app(scope, receive, send)
+            return
+        if scope_type == 'websocket':
+            await send({'type': 'websocket.close', 'code': 1008})
             return
         await JSONResponse({'detail': 'Authentication required'}, status_code=401)(
             scope, receive, send,
@@ -128,34 +140,43 @@ class AuthMiddleware:
 
 
 def _cookie_value(header: str, name: str) -> Optional[str]:
-    """The first cookie named ``name`` in a raw ``Cookie`` header.
+    """Read the cookie named ``name`` from raw ``Cookie`` header text.
 
-    Starlette's ``Request.cookies`` is not available at the ASGI layer this
-    middleware runs at, and the header is a simple ``a=b; c=d`` list. A
-    missing or empty value is ``None``, which ``is_authenticated`` rejects.
+    Matches Starlette's ``Request.cookies`` semantics (last matching pair wins,
+    surrounding quotes stripped) and accepts semicolon-joined HTTP/2 headers.
     """
     if not header:
         return None
-    prefix = name + '='
+    found: Optional[str] = None
     for part in header.split(';'):
-        piece = part.strip()
-        if piece.startswith(prefix):
-            value = piece[len(prefix):]
-            return value or None
-    return None
+        if '=' not in part:
+            continue
+        k, v = part.split('=', 1)
+        if k.strip() != name:
+            continue
+        val = v.strip()
+        if len(val) >= 2 and val[0] == '"' and val[-1] == '"':
+            val = val[1:-1]
+        found = val or None
+    return found
 
 
-# Host header allowlist. Binding to loopback keeps other machines out but not
-# other *pages*: a site the user has open can resolve a hostname it owns to
-# 127.0.0.1 and reach this process from inside the browser. That request
-# carries the attacker's hostname in its Host header, so requiring the header
-# to name the panel closes that route. It is not the only route -- see the
-# Origin check below. An optional access password (``web.auth``) is what
-# stops another machine once the panel is bound past loopback.
-# See `web.config.allowed_hosts` for how to widen the Host list deliberately.
+# Starlette wraps middleware LIFO (last added executes first on incoming
+# requests). Register inner-to-outer so every request traverses:
+#   HostHeaderMiddleware -> CORSMiddleware -> WriteOriginMiddleware -> AuthMiddleware -> route
+# This guarantees disallowed Host headers are refused with 400 immediately
+# without answering CORS preflights or hitting SQLite for auth checks.
+app.add_middleware(AuthMiddleware)
+app.add_middleware(WriteOriginMiddleware, allowed=allowed_origins())
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(DEV_ORIGINS),
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+
 _ALLOWED_HOSTS = allowed_hosts()
 app.add_middleware(HostHeaderMiddleware, allowed=_ALLOWED_HOSTS)
-app.add_middleware(AuthMiddleware)
 if '*' in _ALLOWED_HOSTS:
     logging.getLogger('futuresview.web').warning(
         'Host header check is OFF (%s contains "*"): this panel will answer to any '
@@ -166,25 +187,6 @@ else:
     logging.getLogger('futuresview.web').info(
         'Host header restricted to: %s', ', '.join(_ALLOWED_HOSTS),
     )
-
-# Origin check on writes. A page that addresses 127.0.0.1 directly sends the
-# panel's own Host, so the check above lets it through, and CORS below does not
-# stop a request being *made* -- only its response being read. A POST with no
-# Content-Type skips the preflight altogether, and FastAPI still parses its body
-# as JSON, so without this a page the user merely had open could start jobs and
-# write the product registry. See `web.config.write_origin_allowed`.
-app.add_middleware(WriteOriginMiddleware, allowed=allowed_origins())
-
-# Dev-only: the Vite dev server runs on its own port (5173) and proxies /api
-# to this process, but the browser still sees two origins until that proxy
-# kicks in on first load. A production build is served from this same
-# process (see the static mount below), where CORS is moot.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=list(DEV_ORIGINS),
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
 
 for router in (auth, products, data, strategies, indicators, backtest, alerts, runs, jobs):
     app.include_router(router.router)
@@ -197,58 +199,27 @@ def health():
 
 @app.api_route(
     '/api/{rest:path}',
-    methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    methods=['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH'],
     include_in_schema=False,
 )
 def api_not_found(rest: str):
-    """Catch anything under /api that no router claimed.
-
-    Declared after every router (so real routes still win) and before the SPA
-    fallback below (so it wins over that). Without it a misspelled endpoint
-    fell through to the SPA and came back as 200 text/html, which the
-    frontend's fetch wrapper then failed to parse -- a JSON decode error
-    somewhere in the UI instead of the 404 that actually happened.
-
-    Kept out of the OpenAPI schema. FastAPI derives a route's operation id
-    once per *route*, not per method, so these five methods shared one id and
-    every schema build warned about the duplicate. It does not belong in the
-    docs regardless: it is the absence of an endpoint, and listing it offered
-    five phantom operations accepting any path under /api.
-    """
+    """Catch anything under /api that no router claimed."""
     raise HTTPException(status_code=404, detail=f'No such endpoint: /api/{rest}')
 
 
 if os.path.isdir(STATIC_DIR):
-    app.mount('/assets', StaticFiles(directory=os.path.join(STATIC_DIR, 'assets')), name='assets')
+    _ASSETS_DIR = os.path.join(STATIC_DIR, 'assets')
+    if os.path.isdir(_ASSETS_DIR):
+        app.mount('/assets', StaticFiles(directory=_ASSETS_DIR), name='assets')
 
     _STATIC_ROOT = os.path.realpath(STATIC_DIR)
-
-    # index.html names the hashed bundles, so it must never be served stale:
-    # without an explicit Cache-Control browsers fall back to heuristic caching
-    # (a fraction of the file's age) and keep showing the previous build after a
-    # rebuild until someone hard-refreshes. ``no-cache`` still caches the file,
-    # it just forces a revalidation, which the ETag answers with a 304. The
-    # hashed files under /assets stay freely cacheable -- their names change.
     _NO_CACHE = {'Cache-Control': 'no-cache'}
 
-    # Out of the schema for the same reason as the /api catch-all above: this
-    # serves the frontend, and as an OpenAPI operation it reads as a GET that
-    # accepts every path on the server.
     @app.get('/{full_path:path}', include_in_schema=False)
     def spa(full_path: str):
-        """Serve a built frontend file, falling back to index.html so the
-        SPA's client-side routes survive a reload.
-
-        ``full_path`` is whatever the client put in the request line, with
-        no normalisation: the ASGI server percent-decodes it but does not
-        collapse ``..``. A browser collapses those segments before the
-        request leaves, which is why this reads as safe from the UI, but
-        curl ``--path-as-is``, any non-browser client, and anything arriving
-        through a proxy do not -- so resolve first and require the result to
-        sit under the build directory, or this hands out every file the
-        process can read. ``/assets`` above is Starlette's ``StaticFiles``,
-        which already does its own containment check.
-        """
+        """Serve a built frontend file, falling back to index.html."""
+        if '\x00' in full_path:
+            raise HTTPException(status_code=404, detail='Not found')
         candidate = os.path.realpath(os.path.join(_STATIC_ROOT, full_path))
         if full_path and is_within(candidate, _STATIC_ROOT) and os.path.isfile(candidate):
             if os.path.basename(candidate) == 'index.html':

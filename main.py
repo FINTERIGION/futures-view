@@ -5,6 +5,7 @@ Usage (from the repo root):
   python main.py data SA CF RB                     # download / rebuild exchange history
   python main.py backtest --strategy double_ma     # run a backtest, write charts + trade log
   python main.py web                               # serve the browser panel
+  python main.py alert                             # update data, check monitors, send alerts
 
 Run ``python main.py <subcommand> --help`` for each command's full flag list.
 """
@@ -42,7 +43,7 @@ logger = logging.getLogger('futuresview.cli')
 
 
 def _strategy_names() -> list:
-    return sorted(discover_strategies())
+    return sorted(discover_strategies(errors={}))
 
 
 def _load_strategy(spec: str) -> type:
@@ -84,11 +85,13 @@ def cmd_data(args) -> None:
 # backtest
 # ---------------------------------------------------------------------
 
-def _save_trade_log(trade_logs: list, results_dir: str, strategy_name: str) -> str:
+def _save_trade_log(
+    trade_logs: list, results_dir: str, strategy_name: str, ts: str = None,
+) -> str:
     from core.ledger import TRADE_LOG_FIELDS
 
-    ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    path = os.path.join(results_dir, f'{strategy_name}_trades_{ts}.csv')
+    stamp = ts or datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(results_dir, f'{strategy_name}_trades_{stamp}.csv')
     with open(path, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.DictWriter(f, fieldnames=TRADE_LOG_FIELDS)
         writer.writeheader()
@@ -228,7 +231,8 @@ def cmd_backtest(args) -> dict:
     result, metrics = outcome['result'], outcome['metrics']
 
     os.makedirs(args.results_dir, exist_ok=True)
-    log_path = _save_trade_log(result['trade_logs'], args.results_dir, strategy_name)
+    run_ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_path = _save_trade_log(result['trade_logs'], args.results_dir, strategy_name, ts=run_ts)
     _print_summary(metrics, log_path)
 
     logger.info('[3/3] Plotting charts ...')
@@ -240,7 +244,7 @@ def cmd_backtest(args) -> dict:
         price_dfs=price_dfs,
         signal_log=result['signal_log'],
         metrics=metrics,
-        config={'results_dir': args.results_dir, 'strategy_name': strategy_name},
+        config={'results_dir': args.results_dir, 'strategy_name': strategy_name, 'timestamp': run_ts},
         exec_price_dfs=exec_price_dfs,
         symbols=symbols,
     )
@@ -351,7 +355,9 @@ def cmd_web(args) -> None:
     import uvicorn
 
     from web.auth import clear_password, password_is_set
-    from web.config import ALLOWED_HOSTS_ENV
+    from web.config import ALLOWED_HOSTS_ENV, PANEL_PORT_ENV
+
+    os.environ[PANEL_PORT_ENV] = str(args.port)
 
     if args.clear_password:
         clear_password()
@@ -381,8 +387,12 @@ def cmd_web(args) -> None:
 # ---------------------------------------------------------------------
 
 def cmd_alert(args) -> dict:
+    from web import store
     from web.alert_service import run_alert_dispatch
 
+    # Do not mark live web-server runs/deliveries as interrupted when invoking
+    # the CLI alongside a running ``main.py web`` process.
+    store.set_adopt_orphans_on_connect(False)
     outcome = run_alert_dispatch(
         trigger='cli',
         update_data=not args.no_update,

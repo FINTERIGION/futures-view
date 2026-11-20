@@ -471,3 +471,185 @@ def test_monitors_channels_schedule_and_dispatch_api(client, monkeypatch):
     assert client.get('/api/alerts/channels').status_code == 401
     assert client.get('/api/alerts/schedule').status_code == 401
     assert client.post('/api/alerts/dispatch', json={}).status_code == 401
+
+
+def test_notifier_blocks_secret_exfiltration_on_destination_change(client):
+    """Changing Telegram api_base/proxy or Webhook url/proxy while leaving
+    saved secrets blank must be rejected so masked secrets cannot be diverted."""
+    tg = client.post('/api/alerts/channels', json={
+        'kind': 'telegram',
+        'name': 'TG',
+        'enabled': True,
+        'config': {'bot_token': '123456:TOP_SECRET', 'chat_id': '999'},
+    }).json()
+
+    # Changing api_base to another custom host without re-entering bot_token -> 422
+    resp = client.put(f"/api/alerts/channels/{tg['id']}", json={
+        'kind': 'telegram',
+        'name': 'TG',
+        'enabled': True,
+        'config': {'bot_token': '', 'chat_id': '999', 'api_base': 'https://evil.example'},
+    })
+    assert resp.status_code == 422
+    assert 'bot_token' in resp.json()['detail']
+
+    # Same destination (default api_base) preserves saved token
+    ok = client.put(f"/api/alerts/channels/{tg['id']}", json={
+        'kind': 'telegram',
+        'name': 'TG Renamed',
+        'enabled': True,
+        'config': {'bot_token': '', 'chat_id': '999'},
+    })
+    assert ok.status_code == 200, ok.text
+
+    wh = client.post('/api/alerts/channels', json={
+        'kind': 'webhook',
+        'name': 'WH',
+        'enabled': True,
+        'config': {
+            'url': 'https://hooks.example.com/a',
+            'headers': {'Authorization': 'Bearer REAL_TOKEN'},
+        },
+    }).json()
+    masked_auth = wh['config']['headers']['Authorization']
+    assert masked_auth != 'Bearer REAL_TOKEN'
+    assert 'REAL_TOKEN' not in masked_auth
+
+    # Changing webhook URL while keeping masked Authorization header -> 422
+    resp_wh = client.put(f"/api/alerts/channels/{wh['id']}", json={
+        'kind': 'webhook',
+        'name': 'WH',
+        'enabled': True,
+        'config': {
+            'url': 'https://evil.example/steal',
+            'headers': {'Authorization': masked_auth},
+        },
+    })
+    assert resp_wh.status_code == 422
+
+
+def test_notifier_blocks_cloud_metadata_and_panel_port_but_allows_other_local_ports(monkeypatch):
+    monkeypatch.setenv('FT_WEB_PORT', '8888')
+    wh = notifiers.get_provider('webhook')
+    # Cloud metadata & link-local blocked
+    for bad in (
+        'http://169.254.169.254/latest/meta-data/',
+        'http://metadata.google.internal/computeMetadata/v1/',
+        'http://[fe80::1]/hook',
+        'http://127.0.0.1:8888/api/alerts/dispatch',
+        'http://localhost:8888/api/products',
+    ):
+        with pytest.raises(ValueError):
+            wh.validate_config({'url': bad})
+
+    # Other localhost / LAN ports remain allowed per policy
+    cfg_local = wh.validate_config({'url': 'http://127.0.0.1:9999/hook'})
+    assert cfg_local['url'] == 'http://127.0.0.1:9999/hook'
+    cfg_lan = wh.validate_config({'url': 'http://192.168.1.50:9000/notify'})
+    assert cfg_lan['url'] == 'http://192.168.1.50:9000/notify'
+
+
+def test_notifier_scrubs_secrets_and_rejects_redirects_and_non_json_telegram(monkeypatch):
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f'failed contacting {request.url}')
+
+    tg = notifiers.get_provider('telegram')
+    wh = notifiers.get_provider('webhook')
+    sample_report = {
+        'event': 'futuresview.alert_test',
+        'trigger': 'test',
+        'generated_at': '2026-11-19T15:30:00+08:00',
+        'run_date': '2026-11-19',
+        'run_time_label': 'Test',
+        'data_update': {'updated': [], 'stale': [], 'failed': {}, 'skipped': True},
+        'data_warnings': [],
+        'monitors': [],
+    }
+
+    monkeypatch.setattr(notifiers, '_HTTP_TRANSPORT', httpx.MockTransport(fail_transport))
+    tg_cfg = {
+        'bot_token': '123456:MY_SUPER_SECRET_TOKEN',
+        'chat_id': '42',
+        'proxy': 'http://user:PROXY_PASS@127.0.0.1:9191',
+    }
+    res = tg.send('ch-1', 'TG', tg_cfg, sample_report)
+    assert not res.ok
+    assert 'MY_SUPER_SECRET_TOKEN' not in res.detail
+    assert 'PROXY_PASS' not in res.detail
+
+    # 302 redirect must fail (not treated as ok)
+    monkeypatch.setattr(
+        notifiers,
+        '_HTTP_TRANSPORT',
+        httpx.MockTransport(lambda req: httpx.Response(302, headers={'Location': 'https://elsewhere'})),
+    )
+    res_302 = wh.send('ch-2', 'WH', {'url': 'http://127.0.0.1:9999/hook'}, sample_report)
+    assert not res_302.ok
+    assert res_302.status_code == 302
+
+    # Non-JSON 200 Telegram response must fail
+    monkeypatch.setattr(
+        notifiers,
+        '_HTTP_TRANSPORT',
+        httpx.MockTransport(lambda req: httpx.Response(200, text='<html>gateway error</html>')),
+    )
+    res_html = tg.send('ch-3', 'TG', {'bot_token': '123456:ABC', 'chat_id': '42'}, sample_report)
+    assert not res_html.ok
+
+
+def test_scheduler_handles_midnight_grace_window_and_dst_fallback(monkeypatch):
+    # 23:59 slot on Thursday 2026-11-19 must still fire at 00:00:30 (90s <= 120s grace)
+    alert_service.save_schedule({
+        'enabled': True,
+        'times': ['23:59'],
+        'timezone': 'Asia/Shanghai',
+        'weekdays_only': True,
+        'update_data': False,
+        'language': 'zh',
+    })
+    fired = []
+    sched = AlertScheduler(dispatch_fn=lambda **kw: fired.append(kw))
+    now_after_midnight = datetime(2026, 11, 20, 0, 0, 30, tzinfo=ZoneInfo('Asia/Shanghai'))
+    claimed = sched.tick(now=now_after_midnight)
+    assert claimed == ['2026-11-19 23:59']
+    assert len(fired) == 1
+
+    # DST fall-back in America/New_York: 2026-11-01 01:30 EDT (fold=0) vs 01:30 EST (fold=1)
+    alert_service.save_schedule({
+        'enabled': True,
+        'times': ['01:30'],
+        'timezone': 'America/New_York',
+        'weekdays_only': False,
+        'update_data': False,
+        'language': 'en',
+    })
+    # 01:31 EDT (fold=0) is 60s after 01:30 EDT -> within 120s grace window
+    now_dst = datetime(2026, 11, 1, 1, 31, fold=0, tzinfo=ZoneInfo('America/New_York'))
+    claimed_dst = sched.tick(now=now_dst)
+    assert claimed_dst == ['2026-11-01 01:30 (America/New_York)']
+
+
+def test_cmd_alert_does_not_mark_inflight_web_runs_interrupted(monkeypatch):
+    """Running ``main.py alert`` while the web server has an in-flight backtest
+    must not trigger web orphan adoption on store connect."""
+    import main
+
+    run_id = store_module.create_run(kind='backtest', strategy='DoubleMA', symbols=['SA'])
+    assert store_module.get_run(run_id)['status'] == 'running'
+
+    # Simulate a fresh CLI process connecting to the same SQLite DB
+    store_module.close()
+
+    def fake_dispatch(**kw):
+        # Force a fresh DB connection inside cmd_alert to exercise _get_conn()
+        store_module.list_runs()
+        return {'status': 'ok', 'summary': 'ok', 'results': []}
+
+    monkeypatch.setattr(alert_service, 'run_alert_dispatch', fake_dispatch)
+    try:
+        args = main._parse_args(['alert', '--no-update'])
+        main.cmd_alert(args)
+        assert store_module.get_run(run_id)['status'] == 'running'
+    finally:
+        store_module.set_adopt_orphans_on_connect(True)
+

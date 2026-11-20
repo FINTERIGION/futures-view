@@ -96,7 +96,7 @@ def list_strategies():
     entries.extend(
         _broken_entry(mod, msg, set(found)) for mod, msg in sorted(import_errors.items())
     )
-    return entries
+    return jsonable(entries)
 
 
 @router.get('/{key}')
@@ -105,7 +105,7 @@ def get_strategy(key: str):
         cls = load_registered_strategy(key)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    return _describe(key, cls)
+    return jsonable(_describe(key, cls))
 
 
 @router.post('/reload')

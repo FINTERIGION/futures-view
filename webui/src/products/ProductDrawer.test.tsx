@@ -4,7 +4,8 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { productsApi } from '../api/endpoints'
-import { JobsProvider, useJobSlot } from '../shell/JobsProvider'
+import { JobsProvider } from '../shell/JobsProvider'
+import { useJobSlot } from '../shell/jobsStore'
 import { MockEventSource } from '../test/setup'
 import { ProductDrawer } from './ProductDrawer'
 
@@ -135,6 +136,45 @@ describe('rate display', () => {
     act(() => {
       MockEventSource.instances[0]?.emit({ type: 'state', id: 'alert-1', kind: 'alert', status: 'running', progress: 0.5 })
     })
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
+  })
+
+  it('shows a validation error when a required numeric field is cleared instead of sending null', async () => {
+    const user = userEvent.setup()
+    vi.mocked(productsApi.update).mockClear()
+    vi.mocked(productsApi.get).mockResolvedValue(product(0.125, 0.0001) as never)
+    renderDrawer()
+
+    const multInput = await screen.findByLabelText('Multiplier')
+    await waitFor(() => expect(multInput).toHaveValue(20))
+    await user.clear(multInput)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText(/multiplier is required/i)).toBeInTheDocument()
+    expect(productsApi.update).not.toHaveBeenCalled()
+  })
+
+  it('locks Save and Delete while an alert dispatch job is running', async () => {
+    vi.mocked(productsApi.get).mockResolvedValue(product(0.125, 0.0001) as never)
+    function StartDispatchJob() {
+      const { start } = useJobSlot('dispatch')
+      useEffect(() => {
+        start('disp-1')
+      }, [start])
+      return null
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+    render(
+      <QueryClientProvider client={client}>
+        <JobsProvider>
+          <StartDispatchJob />
+          <ProductDrawer code="SA" onClose={vi.fn()} />
+        </JobsProvider>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('button', { name: 'Save' })
+    MockEventSource.instances[0]?.emit({ type: 'state', id: 'disp-1', kind: 'alert_dispatch', status: 'running', progress: 0.4 })
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
   })

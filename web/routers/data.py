@@ -14,6 +14,7 @@ from datafeed.products import list_products, normalize_symbol, require_products
 
 from web.barscache import cache as bars_cache
 from web.data_status import coverage_for
+from web.data_sync import acquire_symbol
 from web.jobs import manager as job_manager
 from web.marketcache import cache as market_cache
 from web.schemas import DataUpdateRequest
@@ -66,6 +67,7 @@ def start_update(body: DataUpdateRequest):
         n = len(symbols)
         stale = []
         try:
+            cancel_event = getattr(job, '_cancel_event', None)
             for i, sym in enumerate(symbols):
                 if job.cancel_requested:
                     job.message = f'Cancelled before {sym}'
@@ -73,25 +75,20 @@ def start_update(body: DataUpdateRequest):
                 job.message = f'Updating {sym} ({i + 1}/{n})'
                 job.progress = i / n
                 try:
-                    update = DataUpdate(normalize_symbol(sym))
-                    update.update(force=body.force, rebuild_only=body.rebuild_only)
-                    if update.stale_keys:
-                        stale.append(sym)
+                    with acquire_symbol(sym, cancel_event=cancel_event):
+                        update = DataUpdate(normalize_symbol(sym))
+                        update.update(force=body.force, rebuild_only=body.rebuild_only)
+                        if update.stale_keys:
+                            stale.append(sym)
                 except Exception as exc:
                     logger.error('Data update failed for %s: %s', sym, exc)
                     raise
         finally:
-            # Release on every exit -- a raise or a cancel must not leave a
-            # symbol permanently unclaimable for the life of the process.
+            market_cache.invalidate()
+            bars_cache.invalidate()
             with _inflight_lock:
                 _inflight.difference_update(symbols)
                 _inflight_lock.notify_all()
-            # Also on every exit: a run that fails on its third symbol has
-            # already rewritten the first two's CSVs, and skipping this on the
-            # raise left the panel serving their pre-update frames until the
-            # next *successful* update or a restart.
-            market_cache.invalidate()
-            bars_cache.invalidate()
         job.progress = 1.0
         return {'symbols': symbols, 'stale': stale}
 

@@ -94,13 +94,22 @@ def compute_metrics(
         )
 
     n_years = max(len(dates) / trading_days_per_year, 1e-9)
-    annualized_return = (
-        (1.0 + total_return) ** (1.0 / n_years) - 1.0 if total_return > -1 else -1.0
-    )
+    if total_return <= -1:
+        annualized_return = -1.0
+    else:
+        try:
+            annualized_return = (1.0 + total_return) ** (1.0 / n_years) - 1.0
+        except OverflowError:
+            annualized_return = float('inf')
+        if not math.isfinite(annualized_return):
+            annualized_return = float('inf')
     annualized_volatility = float(dr.std() * math.sqrt(trading_days_per_year))
-    calmar_ratio = (
-        annualized_return / max_drawdown if max_drawdown > 1e-9 else float('inf')
-    )
+    if max_drawdown > 1e-9:
+        calmar_ratio = annualized_return / max_drawdown
+    elif annualized_return > 0:
+        calmar_ratio = float('inf')
+    else:
+        calmar_ratio = 0.0
 
     n_trades = len(trade_logs)
     if n_trades > 0:
@@ -109,11 +118,21 @@ def compute_metrics(
         win_rate = len(winning) / n_trades
         avg_win = sum(t['net_pnl'] for t in winning) / len(winning) if winning else 0.0
         avg_loss = abs(sum(t['net_pnl'] for t in losing) / len(losing)) if losing else 0.0
-        profit_loss_ratio = avg_win / avg_loss if avg_loss > 1e-10 else float('inf')
+        if avg_loss > 1e-10:
+            profit_loss_ratio = avg_win / avg_loss
+        elif avg_win > 0:
+            profit_loss_ratio = float('inf')
+        else:
+            profit_loss_ratio = 0.0
         expectancy = sum(t['net_pnl'] for t in trade_logs) / n_trades
         gross_wins = sum(t['net_pnl'] for t in winning)
         gross_losses = abs(sum(t['net_pnl'] for t in losing))
-        profit_factor = gross_wins / gross_losses if gross_losses > 1e-10 else float('inf')
+        if gross_losses > 1e-10:
+            profit_factor = gross_wins / gross_losses
+        elif gross_wins > 0:
+            profit_factor = float('inf')
+        else:
+            profit_factor = 0.0
         holding_days = [
             (t['close_date'] - t['open_date']).days
             for t in trade_logs if t['close_date'] and t['open_date']
@@ -146,7 +165,9 @@ def compute_metrics(
         'initial_cash': initial_cash,
         'final_equity': round(final_equity, 2),
         'total_return': round(total_return * 100, 4),
-        'annualized_return': round(annualized_return * 100, 4),
+        'annualized_return': (
+            round(annualized_return * 100, 4) if math.isfinite(annualized_return) else annualized_return
+        ),
         'annualized_volatility': round(annualized_volatility * 100, 4),
         'sharpe_ratio': round(sharpe, 4),
         'sortino_ratio': round(sortino, 4),
@@ -187,7 +208,7 @@ def annualization_factor(dates: List[Date]) -> float:
     years = span_days / 365.25
     if years <= 0:
         return _DEFAULT_TRADING_DAYS_PER_YEAR
-    return len(dates) / years
+    return (len(dates) - 1) / years
 
 
 def _capital_exposure(equity_records: List[dict]) -> float:

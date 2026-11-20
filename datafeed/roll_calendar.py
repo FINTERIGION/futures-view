@@ -71,10 +71,11 @@ def target_expiry(
     ts = pd.Timestamp(dt).normalize()
     months = normalize_main_months(main_months)
     lead = int(lead_months)
-    # A lead longer than a year pulls the roll date back whole years, so the
-    # scan has to start that far in the past to still find the nearest one.
-    first_year = int(ts.year) - lead // 12 - 1
-    for year in range(first_year, int(ts.year) + 3):
+    # ``roll_date`` subtracts ``lead`` months from the delivery month, so a
+    # longer lead pushes the needed delivery year further into the future.
+    first_year = int(ts.year)
+    last_year = int(ts.year) + lead // 12 + 3
+    for year in range(first_year, last_year):
         for month in months:
             if roll_date((year, month), lead) > ts:
                 return year, month
@@ -126,15 +127,6 @@ def parse_contract_expiry(code, asof) -> Optional[Expiry]:
         return best_exp
 
     return None
-
-
-def infer_code_expiry(code: str, sample_dates: Iterable) -> Optional[Expiry]:
-    """Infer expiry for a contract from the dates it actually traded."""
-    dates = list(sample_dates)
-    if not dates:
-        return None
-    first = min(pd.Timestamp(d) for d in dates)
-    return parse_contract_expiry(code, first)
 
 
 def annotate_expiries(contracts_df: pd.DataFrame) -> pd.DataFrame:

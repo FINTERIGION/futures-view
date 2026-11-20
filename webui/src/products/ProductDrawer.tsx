@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Drawer } from '../components/Drawer'
-import { ProductFormFields, useProductForm } from './ProductForm'
+import { ProductFormFields } from './ProductForm'
+import { useProductForm } from './useProductForm'
 
 export function ProductDrawer({ code, onClose }: { code: string | null; onClose: () => void }) {
   const { t } = useTranslation()

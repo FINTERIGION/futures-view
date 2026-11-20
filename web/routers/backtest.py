@@ -77,22 +77,24 @@ def start_backtest(body: BacktestRequest):
     )
 
     def run(job):
+        if job.cancel_requested:
+            store.finish_run(run_id, status='cancelled')
+            return {'run_id': run_id, 'cancelled': True}
         job.message = 'Loading market data'
         market = market_cache.get(symbols, body.start, body.end)
+        if job.cancel_requested:
+            store.finish_run(run_id, status='cancelled')
+            return {'run_id': run_id, 'cancelled': True}
         job.progress = 0.3
         job.message = f'Running {strategy_cls.__name__}'
         outcome = run_single_backtest(
             market, strategy_cls, params, body.cash, body.slippage,
         )
+        if job.cancel_requested:
+            store.finish_run(run_id, status='cancelled')
+            return {'run_id': run_id, 'cancelled': True}
         job.progress = 0.9
         result, metrics = outcome['result'], outcome['metrics']
-        # `compute_metrics` returns `{}` outright for a run with no recorded
-        # bars, dropping the `blown_up` it was handed. An account that starts
-        # insolvent used to get here -- flagged on bar 0, nothing recorded,
-        # a green "done" over a grid of "n/a" -- and is now refused as a 422
-        # (`BacktestRequest.cash`). Kept so the flag is always present, and
-        # always the engine's own, whatever else leaves a run empty. A no-op
-        # for a normal run, where `metrics['blown_up']` already holds it.
         metrics = {**metrics, 'blown_up': bool(result['blown_up'])}
         artifact = _build_artifact(market, symbols, result)
         store.finish_run(run_id, status='done', metrics=metrics, artifact=artifact)
@@ -106,5 +108,9 @@ def start_backtest(body: BacktestRequest):
             store.finish_run(run_id, status='error', error=str(exc))
             raise
 
-    job = job_manager.submit('backtest', run_wrapped)
+    try:
+        job = job_manager.submit('backtest', run_wrapped)
+    except Exception as exc:
+        store.finish_run(run_id, status='error', error=str(exc))
+        raise
     return {'job_id': job.id, 'run_id': run_id}

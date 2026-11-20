@@ -91,6 +91,11 @@ class Engine:
         # price reached on the execution contract since entry, shifted by the
         # roll basis alongside the brackets.
         self.trade_extreme: Dict[str, dict] = {}
+        # ``{'trade_id': id, 'price': base}`` for each open position: the entry
+        # price anchor used to resolve ``distance`` brackets, shifted by the
+        # roll basis on a roll so original risk distance is preserved on the
+        # new contract rather than reset to roll-day open.
+        self.trade_anchor: Dict[str, dict] = {}
 
         self.indicators: Dict[tuple, "object"] = {}
         # Warmup is tracked per product, not once for the whole universe: a
@@ -339,25 +344,11 @@ class Engine:
         """Put both protective legs back on the price scale they now trade on.
 
         A roll changes which contract the bracket is checked against, and two
-        calendar contracts run a basis of a few percent. Migrating only the
-        *contract* and leaving the *level* -- which is what this used to do --
-        leaves a level derived from the old contract's prices being compared
-        against the new one's high/low: on a backwardated roll that puts a
-        long's stop above the market, and ``_bracket_hit``'s gap tier flattens
-        the position at the very next open for no reason at all.
-
-        A ``distance`` spec needs no arithmetic here: dropping the resting
-        order makes ``_arm_brackets`` re-resolve it against the position's new
-        ``avg_entry`` -- the price actually paid on the new contract -- so the
-        basis cancels by construction. That is the whole reason strategies are
-        pointed at distances rather than prices.
-
-        An explicit ``price`` has no such anchor: it is a level the strategy
-        named while the old contract was the market. It is shifted by the
-        basis the roll just realized, which keeps the level the same distance
-        from the market as the strategy chose. The spec is shifted, not just
-        the resting order, because the resting order is dropped here and
-        ``_arm_brackets`` re-arms it from the spec.
+        calendar contracts run a basis of a few percent. Both ``price`` rules
+        and the ``distance`` entry anchor (``trade_anchor``) are shifted by
+        the realized roll basis ``new_open - ref`` so the resting stop and
+        take-profit keep their exact distance from the original entry on the
+        new contract's scale, rather than resetting to roll-day open.
         """
         for spec_by_sym, live in ((self.stop_spec, self.live_stop),
                                   (self.tp_spec, self.live_tp)):
@@ -368,6 +359,24 @@ class Engine:
         ext = self.trade_extreme.get(sym)
         if ext is not None:
             ext['price'] = float(ext['price']) + basis
+        anc = self.trade_anchor.get(sym)
+        if anc is not None:
+            anc['price'] = float(anc['price']) + basis
+
+    def _clear_unbound_price_specs(self, sym: str) -> None:
+        """Drop ``price`` specs set while flat that never armed onto a trade."""
+        for spec_by_sym, owner in ((self.stop_spec, self.stop_owner),
+                                   (self.tp_spec, self.tp_owner)):
+            spec = spec_by_sym.get(sym)
+            if spec is not None and 'price' in spec and (owner.get(sym) or (None,))[0] is not spec:
+                del spec_by_sym[sym]
+
+    def _distance_base(self, sym: str, contract: str) -> Optional[float]:
+        anc = self.trade_anchor.get(sym)
+        if anc is not None:
+            return float(anc['price'])
+        pos = self.broker.positions.get((sym, contract))
+        return float(pos.avg_entry) if pos is not None else None
 
     def _fill_signal(self, sym: str, i: int, date: Date, size: int) -> bool:
         """Fill ``size`` at this bar's open; False if there was no price to fill on.
@@ -390,11 +399,30 @@ class Engine:
         price = self._slipped(float(row[0]), size, sym)
         if not self.broker.can_afford(sym, contract, size, price):
             self._reject(sym, contract, size, price, i, date)
+            if self.broker.net_position(sym) == 0:
+                self._clear_unbound_price_specs(sym)
             return True
+        prev_net = self.broker.net_position(sym)
+        prev_anchor = self.trade_anchor.get(sym)
         f = self.broker.fill(sym, contract, size, price, i, date, reason=Reason.SIGNAL)
         if f is None:
             return True
         self.ledger.process_fill(f)
+        new_net = self.broker.net_position(sym)
+        if new_net == 0:
+            self.trade_anchor.pop(sym, None)
+        else:
+            trade = self.ledger.open_trade_id(sym)
+            if prev_anchor is not None and prev_anchor.get('trade_id') == trade:
+                if prev_net != 0 and (prev_net > 0) == (new_net > 0) and abs(new_net) > abs(prev_net):
+                    add_qty = abs(new_net) - abs(prev_net)
+                    prev_anchor['price'] = float(
+                        (abs(prev_net) * prev_anchor['price'] + add_qty * price) / abs(new_net)
+                    )
+            else:
+                pos = self.broker.positions.get((sym, contract))
+                if pos is not None:
+                    self.trade_anchor[sym] = {'trade_id': trade, 'price': float(pos.avg_entry)}
         self.signal_log.append({
             'date': date, 'price': price,
             'direction': 'buy' if size > 0 else 'sell',
@@ -444,9 +472,8 @@ class Engine:
         """
         if 'price' in spec:
             return (contract, float(spec['price']))
-        pos = self.broker.positions.get((sym, contract))
-        avg_entry = pos.avg_entry if pos is not None else None
-        return (contract, 1 if net > 0 else -1, avg_entry, float(spec['distance']))
+        base = self._distance_base(sym, contract)
+        return (contract, 1 if net > 0 else -1, base, float(spec['distance']))
 
     def _arm_one(self, sym: str, net: int, contract: str, spec: dict,
                  live: Dict[str, dict], sign: int, anchor: tuple) -> None:
@@ -456,19 +483,17 @@ class Engine:
         sits ``distance`` below its cost and its target ``distance`` above,
         and a short mirrors both.
 
-        A ``distance`` is resolved against ``Position.avg_entry`` -- the price
-        actually paid on the real contract -- rather than against anything
-        from the weighted continuous series, because the two run a basis of a
-        few percent and a level lifted from the weighted series would land in
-        the wrong place. That is why strategies are encouraged to pass
-        distances; an explicit ``price`` is taken at face value.
+        A ``distance`` is resolved against ``trade_anchor`` -- the entry price
+        paid on the real contract, shifted by the realized roll basis on any
+        subsequent roll -- rather than against anything from the weighted
+        continuous series. An explicit ``price`` is taken at face value.
         """
         if 'price' in spec:
             price = spec['price']
         else:
-            avg_entry = self.broker.positions[(sym, contract)].avg_entry
+            base = self._distance_base(sym, contract)
             offset = sign * spec['distance']
-            price = avg_entry + offset if net > 0 else avg_entry - offset
+            price = base + offset if net > 0 else base - offset
         live[sym] = {'price': float(price), 'contract': contract, 'anchor': anchor}
 
     @staticmethod
@@ -513,6 +538,7 @@ class Engine:
                 self.live_stop.pop(sym, None)
                 self.live_tp.pop(sym, None)
                 self.trade_extreme.pop(sym, None)
+                self.trade_anchor.pop(sym, None)
                 # ...and any price level that position armed. Only a spec
                 # already bound to a trade is dropped; one set while flat is
                 # still waiting for its entry.
@@ -527,10 +553,13 @@ class Engine:
             if contract is None:
                 continue
             trade = self.ledger.open_trade_id(sym)
+            avg_entry = self.broker.positions[(sym, contract)].avg_entry
             ext = self.trade_extreme.get(sym)
             if ext is None or ext.get('trade_id') != trade:
-                avg_entry = self.broker.positions[(sym, contract)].avg_entry
                 self.trade_extreme[sym] = {'trade_id': trade, 'price': float(avg_entry)}
+            anc = self.trade_anchor.get(sym)
+            if anc is None or anc.get('trade_id') != trade:
+                self.trade_anchor[sym] = {'trade_id': trade, 'price': float(avg_entry)}
             for spec_by_sym, live, owner, sign in (
                 (self.stop_spec, self.live_stop, self.stop_owner, -1),
                 (self.tp_spec, self.live_tp, self.tp_owner, +1),
@@ -647,14 +676,19 @@ class Engine:
                     'direction': 'buy' if fsize > 0 else 'sell',
                     'size': fsize, 'comm': f.commission, 'symbol': sym,
                 })
-            # OCO: one leg filling flattens the position, so the other is void.
+            # OCO: one leg filling flattens the position, so both resting orders
+            # and any absolute ``price`` specs bound to this trade are cleared;
+            # sticky ``distance`` specs stay armed for future entries.
             self.live_stop.pop(sym, None)
-            self.stop_spec.pop(sym, None)
-            self.stop_owner.pop(sym, None)
             self.live_tp.pop(sym, None)
-            self.tp_spec.pop(sym, None)
-            self.tp_owner.pop(sym, None)
+            for spec_by_sym, owner in ((self.stop_spec, self.stop_owner),
+                                       (self.tp_spec, self.tp_owner)):
+                spec = spec_by_sym.get(sym)
+                if spec is not None and 'price' in spec:
+                    del spec_by_sym[sym]
+                    owner.pop(sym, None)
             self.trade_extreme.pop(sym, None)
+            self.trade_anchor.pop(sym, None)
 
         # Update each surviving position's extreme since entry with today's
         # session high (long) or low (short) on the held contract -- including
@@ -732,8 +766,15 @@ class Engine:
             for f in liq_fills:
                 self.ledger.process_fill(f)
             self.trade_extreme.clear()
+            self.trade_anchor.clear()
             self.live_stop.clear()
             self.live_tp.clear()
+            # Drop SIGNAL-phase deltas queued earlier on this same bar (or
+            # deferred from dark bars): the account was just liquidated flat,
+            # so filling a leftover close order at next OPEN would open a
+            # phantom reverse position.
+            self.pending.clear()
+            self.deferred.clear()
             for f in liq_fills:
                 sym = f.symbol
                 for spec_by_sym, owner in ((self.stop_spec, self.stop_owner),
@@ -751,6 +792,8 @@ class Engine:
             self.blown_up = True
             self.blown_up_date = date
             self.blown_up_bar = i
+            self.pending.clear()
+            self.deferred.clear()
 
         if i < self.record_start:
             # Warmup window: valued for bookkeeping continuity only. Excluded

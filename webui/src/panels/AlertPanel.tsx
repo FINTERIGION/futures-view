@@ -19,74 +19,29 @@ import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
 import { Table } from '../components/Table'
 import type { Column } from '../components/Table'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastStore'
 import { effectiveParams, paramSummary, seedParamDraft, type ParamFieldErrors } from '../chart/indicatorParams'
 import { useStickyState } from '../hooks/useStickyState'
-import { useJobSlot } from '../shell/JobsProvider'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useJobSlot } from '../shell/jobsStore'
+import { useWorkspace } from '../shell/workspaceStore'
+import {
+  alertPreviewStore,
+  cachedError,
+  cachedPreview,
+  dropPreview,
+  previewKey,
+  setCachedPreview,
+} from './alertPreviewStore'
 import { StrategyParamFields } from './StrategyParamFields'
-
-export type AlertEntry = AlertMonitor
 
 interface ComposerState {
   mode: 'new' | 'edit' | 'copy'
   entryId?: string
+  initialStrategy?: string
 }
-
-interface InflightPreview {
-  cacheKey: string
-  entryId: string
-  jobId: string
-  batch: boolean
-}
-
-/** Live snapshots survive tab switches; backend-persisted snapshots cover page
- * reloads and headless scheduled runs. Params are part of the key so an edit
- * can never mistake an older configuration's result for its own. */
-const previewCache = new Map<string, AlertSnapshot>()
-const previewErrors = new Map<string, string>()
-const stalePreviews = new Set<string>()
-let announcedDataJob: string | null = null
-let inflight: InflightPreview | null = null
-let starting = false
-let migrationStarted = false
 
 const LEGACY_STORAGE_KEY = 'ft.alertEntries'
 const LEGACY_MIGRATED_KEY = 'ft.alertEntriesMigrated'
-
-function previewKey(entry: AlertMonitor, symbols: string[]): string {
-  return `${entry.id}::${symbols.join(',')}::${JSON.stringify(entry.params)}`
-}
-
-export function resetAlertPreviewState() {
-  previewCache.clear()
-  previewErrors.clear()
-  stalePreviews.clear()
-  announcedDataJob = null
-  inflight = null
-  starting = false
-  migrationStarted = false
-}
-
-function cachedPreview(entry: AlertMonitor, symbols: string[]): AlertSnapshot | undefined {
-  return previewCache.get(previewKey(entry, symbols)) ?? entry.last_snapshot ?? undefined
-}
-
-function cachedError(entry: AlertMonitor, symbols: string[]): string | undefined {
-  return previewErrors.get(previewKey(entry, symbols)) ?? entry.last_error ?? undefined
-}
-
-function dropPreview(entryId: string) {
-  for (const key of [...previewCache.keys()]) {
-    if (key.startsWith(`${entryId}::`)) previewCache.delete(key)
-  }
-  for (const key of [...previewErrors.keys()]) {
-    if (key.startsWith(`${entryId}::`)) previewErrors.delete(key)
-  }
-  for (const key of [...stalePreviews]) {
-    if (key.startsWith(`${entryId}::`)) stalePreviews.delete(key)
-  }
-}
 
 function asSymbolList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -249,7 +204,6 @@ export function AlertPanel() {
   const jobRef = useRef(job)
   const entriesRef = useRef<AlertMonitor[]>([])
   const universeRef = useRef(universe)
-  const pendingRef = useRef<string[]>([])
 
   const { data: strategies } = useQuery({ queryKey: ['strategies'], queryFn: strategiesApi.list })
   const monitorsQuery = useQuery({
@@ -271,8 +225,8 @@ export function AlertPanel() {
   const [pendingOnly, setPendingOnly] = useState(false)
   const [dataStarting, setDataStarting] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
-  const [pendingIds, setPendingIds] = useState<string[]>([])
-  const [batchTotal, setBatchTotal] = useState(0)
+  const [pendingIds, setPendingIds] = useState<string[]>(() => [...alertPreviewStore.pendingIds])
+  const [batchTotal, setBatchTotal] = useState<number>(() => alertPreviewStore.batchTotal)
   const [cacheRev, setCacheRev] = useState(0)
   void cacheRev
 
@@ -292,7 +246,7 @@ export function AlertPanel() {
 
   // Seamless one-time migration of legacy localStorage entries into SQLite.
   useEffect(() => {
-    if (!monitorsQuery.isSuccess || migrationStarted) return
+    if (!monitorsQuery.isSuccess || alertPreviewStore.migrationStarted) return
     if (monitorsQuery.data.length > 0) return
     try {
       if (localStorage.getItem(LEGACY_MIGRATED_KEY)) return
@@ -301,7 +255,7 @@ export function AlertPanel() {
     }
     const legacy = readLegacyEntries(universeRef.current)
     if (legacy.length === 0) return
-    migrationStarted = true
+    alertPreviewStore.migrationStarted = true
     void alertsApi
       .importMonitors(legacy)
       .then(() => {
@@ -313,16 +267,16 @@ export function AlertPanel() {
         return queryClient.invalidateQueries({ queryKey: ['alert-monitors'] })
       })
       .catch(() => {
-        migrationStarted = false
+        alertPreviewStore.migrationStarted = false
       })
   }, [monitorsQuery.isSuccess, monitorsQuery.data, queryClient])
 
   const enqueue = useCallback(
     (ids: string[]) => {
-      const additions = ids.filter((id) => !pendingRef.current.includes(id))
+      const additions = ids.filter((id) => !alertPreviewStore.pendingIds.includes(id))
       if (additions.length === 0) return
-      pendingRef.current = [...pendingRef.current, ...additions]
-      setPendingIds(pendingRef.current)
+      alertPreviewStore.pendingIds = [...alertPreviewStore.pendingIds, ...additions]
+      setPendingIds(alertPreviewStore.pendingIds)
     },
     [setPendingIds],
   )
@@ -332,15 +286,15 @@ export function AlertPanel() {
       const symbols = previewSymbols(entry, universeRef.current)
       if (symbols.length === 0) return
       const cacheKey = previewKey(entry, symbols)
-      if (inflight?.cacheKey === cacheKey && jobRef.current.isActive) return
-      if (starting || jobRef.current.isActive || inflight) {
+      if (alertPreviewStore.inflight?.cacheKey === cacheKey && jobRef.current.isActive) return
+      if (alertPreviewStore.starting || jobRef.current.isActive || alertPreviewStore.inflight) {
         enqueue([entry.id])
         return
       }
 
-      starting = true
-      previewErrors.delete(cacheKey)
-      stalePreviews.delete(cacheKey)
+      alertPreviewStore.starting = true
+      alertPreviewStore.previewErrors.delete(cacheKey)
+      alertPreviewStore.stalePreviews.delete(cacheKey)
       jobRef.current.reset()
       setCacheRev((n) => n + 1)
       try {
@@ -350,12 +304,12 @@ export function AlertPanel() {
           params: entry.params,
           monitor_id: entry.id,
         })
-        inflight = { cacheKey, entryId: entry.id, jobId: job_id, batch }
+        alertPreviewStore.inflight = { cacheKey, entryId: entry.id, jobId: job_id, batch }
         jobRef.current.start(job_id)
       } catch (err) {
-        previewErrors.set(cacheKey, errorMessage(err))
+        alertPreviewStore.previewErrors.set(cacheKey, errorMessage(err))
       } finally {
-        starting = false
+        alertPreviewStore.starting = false
         setCacheRev((n) => n + 1)
       }
     },
@@ -364,12 +318,12 @@ export function AlertPanel() {
 
   useEffect(() => {
     const state = dataJob.state
-    if (state?.status !== 'done' || announcedDataJob === state.id) return
-    announcedDataJob = state.id
-    for (const key of previewCache.keys()) stalePreviews.add(key)
+    if (state?.status !== 'done' || alertPreviewStore.announcedDataJob === state.id) return
+    alertPreviewStore.announcedDataJob = state.id
+    for (const key of alertPreviewStore.previewCache.keys()) alertPreviewStore.stalePreviews.add(key)
     for (const entry of entriesRef.current) {
       if (entry.last_snapshot) {
-        stalePreviews.add(previewKey(entry, previewSymbols(entry, universeRef.current)))
+        alertPreviewStore.stalePreviews.add(previewKey(entry, previewSymbols(entry, universeRef.current)))
       }
     }
     queueMicrotask(() => setCacheRev((n) => n + 1))
@@ -377,45 +331,50 @@ export function AlertPanel() {
 
   useEffect(() => {
     const state = job.state
-    const tracked = state && inflight?.jobId === state.id ? inflight : null
+    const tracked = state && alertPreviewStore.inflight?.jobId === state.id ? alertPreviewStore.inflight : null
     if (!tracked) return
     const bump = () => queueMicrotask(() => setCacheRev((n) => n + 1))
     if (job.lost) {
-      previewErrors.set(tracked.cacheKey, t('jobs.lost'))
-      inflight = null
+      alertPreviewStore.previewErrors.set(tracked.cacheKey, t('jobs.lost'))
+      alertPreviewStore.inflight = null
       bump()
       return
     }
     if (state?.status === 'done' && isAlertSnapshot(state.result)) {
-      previewCache.set(tracked.cacheKey, state.result)
-      previewErrors.delete(tracked.cacheKey)
-      stalePreviews.delete(tracked.cacheKey)
-      inflight = null
+      setCachedPreview(tracked.cacheKey, state.result)
+      alertPreviewStore.previewErrors.delete(tracked.cacheKey)
+      alertPreviewStore.stalePreviews.delete(tracked.cacheKey)
+      alertPreviewStore.inflight = null
       void queryClient.invalidateQueries({ queryKey: ['alert-monitors'] })
       bump()
     } else if (state?.status === 'done' && 'result' in state) {
-      previewErrors.set(tracked.cacheKey, t('alerts.previewFailed'))
-      inflight = null
+      alertPreviewStore.previewErrors.set(tracked.cacheKey, t('alerts.previewFailed'))
+      alertPreviewStore.inflight = null
       bump()
     } else if (state?.status === 'error' || state?.status === 'cancelled') {
-      if (state.status !== 'cancelled') previewErrors.set(tracked.cacheKey, state.error ?? t('alerts.previewFailed'))
-      inflight = null
+      if (state.status !== 'cancelled') {
+        alertPreviewStore.previewErrors.set(tracked.cacheKey, state.error ?? t('alerts.previewFailed'))
+      }
+      alertPreviewStore.inflight = null
       bump()
     }
   }, [job.state, job.lost, queryClient, t])
 
   useEffect(() => {
-    if (starting || job.isActive || inflight) return
-    if (pendingIds.length === 0) {
-      if (batchTotal > 0) queueMicrotask(() => setBatchTotal(0))
+    if (alertPreviewStore.starting || job.isActive || alertPreviewStore.inflight) return
+    if (alertPreviewStore.pendingIds.length === 0) {
+      if (alertPreviewStore.batchTotal > 0) {
+        alertPreviewStore.batchTotal = 0
+        queueMicrotask(() => setBatchTotal(0))
+      }
       return
     }
-    const [nextId, ...rest] = pendingIds
-    pendingRef.current = rest
+    const [nextId, ...rest] = alertPreviewStore.pendingIds
+    alertPreviewStore.pendingIds = rest
     queueMicrotask(() => {
       setPendingIds(rest)
       const entry = entriesRef.current.find((e) => e.id === nextId)
-      if (entry) void startPreview(entry, batchTotal > 0)
+      if (entry) void startPreview(entry, alertPreviewStore.batchTotal > 0)
     })
   }, [job.isActive, pendingIds, batchTotal, cacheRev, startPreview])
 
@@ -483,12 +442,16 @@ export function AlertPanel() {
     mutationFn: (id: string) => alertsApi.deleteMonitor(id),
     onSuccess: (_res, deletedId) => {
       dropPreview(deletedId)
-      pendingRef.current = pendingRef.current.filter((id) => id !== deletedId)
-      setPendingIds(pendingRef.current)
+      if (alertPreviewStore.inflight?.entryId === deletedId) {
+        alertPreviewStore.inflight = null
+      }
+      alertPreviewStore.pendingIds = alertPreviewStore.pendingIds.filter((id) => id !== deletedId)
+      setPendingIds(alertPreviewStore.pendingIds)
       queryClient.setQueryData<AlertMonitor[]>(['alert-monitors'], (prev = []) =>
         prev.filter((e) => e.id !== deletedId),
       )
-      if (activeId === deletedId) setActiveId('')
+      setActiveId((prev) => (prev === deletedId ? '' : prev))
+      setComposer((prev) => (prev?.entryId === deletedId ? null : prev))
       setConfirmDelete(null)
       setCacheRev((n) => n + 1)
     },
@@ -501,7 +464,10 @@ export function AlertPanel() {
   let draft = paramDraft
   const composeSeedKey = composer && composeStrategy ? `${composeSeq}:${composeStrategy.key}` : null
   if (composer && composeStrategy && composeSeedKey && seededKey !== composeSeedKey) {
-    const initial = composer.mode === 'new' ? rememberedParams(composeStrategy.key) : composeInitialParams
+    const initial =
+      composer.mode === 'new' || composeStrategy.key !== composer.initialStrategy
+        ? rememberedParams(composeStrategy.key)
+        : composeInitialParams
     draft = seedParamDraft(composeStrategy, initial)
     setSeededKey(composeSeedKey)
     setParamDraft(draft)
@@ -520,7 +486,7 @@ export function AlertPanel() {
 
   const openCompose = (mode: ComposerState['mode'], entry?: AlertMonitor) => {
     const info = entry ? strategies?.find((s) => s.key === entry.strategy) : undefined
-    setComposer({ mode, entryId: mode === 'edit' ? entry?.id : undefined })
+    setComposer({ mode, entryId: mode === 'edit' ? entry?.id : undefined, initialStrategy: entry?.strategy })
     setComposeSeq((n) => n + 1)
     setDraftStrategy(entry?.strategy ?? '')
     setComposeInitialParams(entry?.params ?? {})
@@ -550,15 +516,17 @@ export function AlertPanel() {
 
   const refreshAll = () => {
     const ids = entries
-      .filter((e) => previewSymbols(e, universe).length > 0 && inflight?.entryId !== e.id)
+      .filter((e) => previewSymbols(e, universe).length > 0 && alertPreviewStore.inflight?.entryId !== e.id)
       .map((e) => e.id)
     if (ids.length === 0) return
+    alertPreviewStore.batchTotal = ids.length
     setBatchTotal(ids.length)
     enqueue(ids)
   }
 
   const cancelBatch = () => {
-    pendingRef.current = []
+    alertPreviewStore.pendingIds = []
+    alertPreviewStore.batchTotal = 0
     setPendingIds([])
     setBatchTotal(0)
   }
@@ -586,12 +554,12 @@ export function AlertPanel() {
   const statusOf = (entry: AlertMonitor): 'idle' | 'queued' | 'running' | 'ready' | 'stale' | 'error' => {
     const symbols = previewSymbols(entry, universe)
     const key = previewKey(entry, symbols)
-    if (inflight?.cacheKey === key && job.isActive) return 'running'
+    if (alertPreviewStore.inflight?.cacheKey === key && job.isActive) return 'running'
     if (pendingIds.includes(entry.id)) return 'queued'
     if (cachedError(entry, symbols)) return 'error'
     const snap = cachedPreview(entry, symbols)
     if (!snap) return 'idle'
-    return stalePreviews.has(key) ? 'stale' : 'ready'
+    return alertPreviewStore.stalePreviews.has(key) ? 'stale' : 'ready'
   }
 
   const statusBadge = (entry: AlertMonitor) => {
@@ -764,7 +732,7 @@ export function AlertPanel() {
     const key = previewKey(entry, symbols)
     const snap = cachedPreview(entry, symbols)
     const error = cachedError(entry, symbols)
-    const running = inflight?.cacheKey === key && job.state
+    const running = alertPreviewStore.inflight?.cacheKey === key && job.state
     return (
       <div className="alert-expand">
         <div className="alert-expand-bar">
@@ -812,8 +780,8 @@ export function AlertPanel() {
   const visibleEntries = pendingOnly
     ? entries.filter((entry) => operationCounts(cachedPreview(entry, previewSymbols(entry, universe))).length > 0)
     : entries
-  const batchRunning = batchTotal > 0 && (pendingIds.length > 0 || Boolean(inflight?.batch))
-  const batchDone = Math.max(0, batchTotal - pendingIds.length - (inflight?.batch ? 1 : 0))
+  const batchRunning = batchTotal > 0 && (pendingIds.length > 0 || Boolean(alertPreviewStore.inflight?.batch))
+  const batchDone = Math.max(0, batchTotal - pendingIds.length - (alertPreviewStore.inflight?.batch ? 1 : 0))
 
   return (
     <div className="alerts-panel">
@@ -858,8 +826,8 @@ export function AlertPanel() {
       {composer && (
         <Card title={t(`alerts.${composer.mode}Title`)} className="alert-composer">
           <div className="field">
-            <label>{t('common.strategy')}</label>
-            <select value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
+            <label htmlFor="alert-composer-strategy">{t('common.strategy')}</label>
+            <select id="alert-composer-strategy" value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
               {(strategies ?? []).map((s) => (
                 <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
                   {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}

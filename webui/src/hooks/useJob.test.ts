@@ -96,4 +96,38 @@ describe('useJob cancel', () => {
     await waitFor(() => expect(result.current.state?.status).toBe('done'))
     expect(result.current.isActive).toBe(false)
   })
+
+  it('settles terminal state when the final jobsApi.get fetch rejects', async () => {
+    mockGet.mockRejectedValueOnce(new Error('network blip'))
+    const { result } = renderHook(() => useJob())
+    act(() => result.current.start('job-1'))
+    const source = MockEventSource.instances.at(-1)!
+    source.emit({ type: 'state', status: 'done', progress: 1, message: 'done' })
+
+    await waitFor(() => expect(result.current.state?.status).toBe('done'))
+    expect(result.current.isActive).toBe(false)
+    expect(result.current.state?.result).toBeUndefined()
+  })
+
+  it('ignores a stale jobsApi.get response after a newer job starts', async () => {
+    let resolveFirst!: (val: unknown) => void
+    mockGet.mockReturnValueOnce(new Promise((r) => { resolveFirst = r }) as never)
+    const { result } = renderHook(() => useJob())
+    act(() => result.current.start('job-1'))
+    const firstSource = MockEventSource.instances.at(-1)!
+    firstSource.emit({ type: 'state', status: 'done', progress: 1, message: 'done-1' })
+
+    // Start a brand-new job while job-1's final GET is still in flight
+    act(() => result.current.start('job-2'))
+    const secondSource = MockEventSource.instances.at(-1)!
+    secondSource.emit({ type: 'state', id: 'job-2', status: 'running', progress: 0.25, message: 'working-2' })
+
+    // Now the stale job-1 GET resolves; it must NOT clobber job-2
+    await act(async () => {
+      resolveFirst({ id: 'job-1', status: 'done', progress: 1, message: 'stale', result: { old: true } })
+      await Promise.resolve()
+    })
+    expect(result.current.state?.id).toBe('job-2')
+    expect(result.current.state?.status).toBe('running')
+  })
 })

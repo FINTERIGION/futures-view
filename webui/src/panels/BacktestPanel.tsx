@@ -1,17 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorMessage } from '../api/client'
 import { backtestApi, runsApi, strategiesApi } from '../api/endpoints'
 import type { RunDetail } from '../api/types'
 import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastStore'
 import { effectiveParams, seedParamDraft, type ParamFieldErrors } from '../chart/indicatorParams'
-import { useJobSlot } from '../shell/JobsProvider'
+import { useJobLifecycle, useJobs } from '../shell/jobsStore'
 import { useHotkeys } from '../shell/useHotkeys'
 import { useStickyState } from '../hooks/useStickyState'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useWorkspace } from '../shell/workspaceStore'
 import { BacktestForm } from './BacktestForm'
 import { ResultTables } from './ResultTables'
 import { sharedFormDefaults } from './sharedFormDefaults'
@@ -74,10 +74,13 @@ export interface BacktestFieldsPrefill {
  */
 export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) {
   const { t } = useTranslation()
-  const job = useJobSlot('backtest')
+  const jobs = useJobs()
+  const job = jobs.backtest
+  const lifecycle = useJobLifecycle()
   const queryClient = useQueryClient()
   const toast = useToast()
   const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   const { universe, toggleUniverse, setSidebarOpen, runId, setRunId } = useWorkspace()
 
   // Read once, the way BacktestPage's router-state prefill was: applying it
@@ -124,8 +127,8 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
   // name both ends, in order. The API rejects each of these too
   // (web/schemas.py); blocking them here is so the user is told before they
   // wait for a job.
-  const slippageValid = slippage >= 0
-  const cashValid = Number.isFinite(cash) && cash > 0
+  const slippageValid = typeof slippage === 'number' && Number.isFinite(slippage) && slippage >= 0
+  const cashValid = typeof cash === 'number' && Number.isFinite(cash) && cash > 0
   const windowValid = start !== '' && end !== '' && start <= end
 
   // Also covers a pick that is no longer in the catalog -- a class renamed or
@@ -180,28 +183,32 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     if (parsed.ok) setStrategyParams({ ...paramMap, [strategy.key]: parsed.params })
   }
 
-  // The run whose outcome has already been announced. A toast is not
-  // idempotent the way `invalidateQueries` is, and this effect re-runs on
-  // every render while the status sits terminal.
-  const announcedJob = useRef<string | null>(null)
-
+  // Shared with `ChartWorkspace` via `lifecycle` so switching tabs or
+  // collapsing the drawer neither misses a completed run nor duplicates its
+  // toast when this panel remounts.
   useEffect(() => {
     const state = job.state
     if (!state || !['done', 'error'].includes(state.status)) return
-    if (state.status === 'done') void queryClient.invalidateQueries({ queryKey: ['runs'] })
-    if (announcedJob.current === state.id) return
-    announcedJob.current = state.id
-    // Said out here as well as in the progress block below, because a run
-    // takes long enough that the drawer is often collapsed or on the History
-    // tab by the time it lands.
-    if (state.status === 'error') {
-      toast.push({ kind: 'error', title: t('backtest.runFailed'), message: state.error ?? undefined })
-    } else {
-      toast.push({ kind: 'success', title: t('backtest.runFinished') })
+    if (lifecycle.claimAnnouncement(`backtest:${state.id}`)) {
+      if (state.status === 'done') void queryClient.invalidateQueries({ queryKey: ['runs'] })
+      if (state.status === 'error') {
+        toast.push({ kind: 'error', title: t('backtest.runFailed'), message: state.error ?? undefined })
+      } else {
+        toast.push({ kind: 'success', title: t('backtest.runFinished') })
+      }
     }
-  }, [job.state, queryClient, toast, t])
+    if (state.status === 'done') {
+      const fallbackRunId = (state.result as { run_id?: string } | undefined)?.run_id ?? null
+      const overlayRunId = lifecycle.claimBacktestOverlay(fallbackRunId)
+      if (overlayRunId) setRunId(overlayRunId)
+    }
+  }, [job.state, lifecycle, queryClient, setRunId, toast, t])
+
+  const anyJobActive =
+    jobs.backtest.isActive || jobs.data.isActive || jobs.alert.isActive || jobs.dispatch.isActive
 
   const canRun =
+    !submitting &&
     !job.isActive &&
     Boolean(strategyKey) &&
     !strategyBroken &&
@@ -211,26 +218,28 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     windowValid &&
     parsedParams.ok
 
-  const runBlockReason = job.isActive
-    ? t('jobs.running')
-    : !strategies
-      ? t('common.loading')
-      : !strategyKey || strategyBroken
-        ? t('backtest.noRunnableStrategy')
-        : universe.length === 0
-          ? t('workspace.noProducts')
-          : !slippageValid
-            ? t('common.slippageNegative')
-            : !cashValid
-              ? t('common.cashNotPositive')
-              : !windowValid
-                ? t('common.windowInverted')
-                : !parsedParams.ok
-                  ? t('backtest.fixParams')
-                  : null
+  const runBlockReason =
+    submitting || job.isActive
+      ? t('jobs.running')
+      : !strategies
+        ? t('common.loading')
+        : !strategyKey || strategyBroken
+          ? t('backtest.noRunnableStrategy')
+          : universe.length === 0
+            ? t('workspace.noProducts')
+            : !slippageValid
+              ? t('common.slippageNegative')
+              : !cashValid
+                ? t('common.cashNotPositive')
+                : !windowValid
+                  ? t('common.windowInverted')
+                  : !parsedParams.ok
+                    ? t('backtest.fixParams')
+                    : null
 
   const runBacktest = async () => {
-    if (!parsedParams.ok) return
+    if (!parsedParams.ok || submitting) return
+    setSubmitting(true)
     setError(null)
     try {
       const { job_id, run_id } = await backtestApi.start({
@@ -242,13 +251,14 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
         slippage,
         params: parsedParams.params,
       })
-      job.start(job_id)
       // A fresh run gets its own overlay even if the server hands back an id
       // this panel has charted before.
-      overlaidRunId.current = null
-      setLastRunId(run_id)
+      lifecycle.trackBacktestRun(run_id)
+      job.start(job_id)
     } catch (err) {
       setError(errorMessage(err))
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -261,32 +271,9 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
     },
   })
 
-  const [lastRunId, setLastRunId] = useState<string | null>(null)
-  /** The run this panel has already put on the chart. Each finished run is
-   * overlaid once, by id, rather than re-applied on every render the effect
-   * below happens to re-run on: `setRunId` is rebuilt on every URL change
-   * (react-router rebuilds `setSearchParams` from the current
-   * `searchParams`), so depending on it alone re-fires the effect on
-   * navigation that has nothing to do with this run -- including the URL
-   * change made by the toolbar's own "exit backtest", which is how that
-   * button came to undo itself. */
-  const overlaidRunId = useRef<string | null>(null)
-
   // The job result carries this run's metrics, and `blown_up` among them.
   const jobMetrics = (job.state?.result as { metrics?: Record<string, unknown> } | undefined)?.metrics
   const jobBlownUp = Boolean(jobMetrics?.blown_up)
-
-  // A finished run overlays the chart automatically -- see the effect below --
-  // so once the job is done, the chart's own `runId` is what this panel's
-  // result table follows too, not a separate "last run I started" id. That
-  // keeps a run reopened from the History tab and a run just launched here
-  // showing through the exact same path.
-  useEffect(() => {
-    if (job.state?.status !== 'done' || !lastRunId) return
-    if (overlaidRunId.current === lastRunId) return
-    overlaidRunId.current = lastRunId
-    setRunId(lastRunId)
-  }, [job.state?.status, lastRunId, setRunId])
 
   const { data: run } = useQuery<RunDetail>({
     queryKey: ['run', runId],
@@ -304,7 +291,7 @@ export function BacktestPanel({ prefill }: { prefill?: BacktestFieldsPrefill }) 
           onStrategyChange={setStrategyKey}
           onReloadStrategies={() => reloadStrategies.mutate()}
           reloadingStrategies={reloadStrategies.isPending}
-          canReloadStrategies={!job.isActive}
+          canReloadStrategies={!anyJobActive}
           paramDraft={draft}
           onParamDraftChange={onParamDraftChange}
           onResetParams={onResetParams}

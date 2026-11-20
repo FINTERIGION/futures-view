@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest'
 // main.tsx does, so `useTranslation` resolves real strings in tests rather
 // than echoing key paths back.
 import '../i18n'
-import { cleanup } from '@testing-library/react'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
 
 // jsdom implements neither of these, and both are read during the first render
@@ -31,11 +31,15 @@ class MockEventSource {
 
   /** Drive the stream from a test the way the server would. */
   emit(payload: unknown) {
-    this.onmessage?.({ data: JSON.stringify(payload) })
+    act(() => {
+      this.onmessage?.({ data: JSON.stringify(payload) })
+    })
   }
 
   fail() {
-    this.onerror?.()
+    act(() => {
+      this.onerror?.()
+    })
   }
 }
 

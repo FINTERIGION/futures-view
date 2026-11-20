@@ -1,4 +1,4 @@
-import { render, renderHook, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ThemeToggle } from '../components/ThemeToggle'
@@ -9,6 +9,16 @@ afterEach(() => {
   delete document.documentElement.dataset.theme
 })
 
+function ThemeProbe() {
+  const dark = useIsDarkMode()
+  return (
+    <>
+      <span data-testid="dark-flag">{String(dark)}</span>
+      <ThemeToggle />
+    </>
+  )
+}
+
 describe('the theme switch', () => {
   it('writes the choice onto <html>, remembers it, and takes the charts with it', async () => {
     // The chrome follows `data-theme` through CSS, but the ECharts canvases
@@ -16,16 +26,15 @@ describe('the theme switch', () => {
     // If the two resolved the theme differently, a chosen dark panel would
     // hold a light chart -- so they are asserted together here.
     const user = userEvent.setup()
-    const { result } = renderHook(() => useIsDarkMode())
-    render(<ThemeToggle />)
+    render(<ThemeProbe />)
 
-    expect(result.current).toBe(false)
+    expect(screen.getByTestId('dark-flag')).toHaveTextContent('false')
 
     await user.click(screen.getByTitle('Dark theme'))
 
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(readThemeMode()).toBe('dark')
-    expect(result.current).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('dark-flag')).toHaveTextContent('true'))
   })
 
   it('drops the attribute again on "follow system", rather than pinning the OS theme of the moment', async () => {

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { strategiesApi } from '../api/endpoints'
 import type { RunSummary } from '../api/types'
 import { RunHistory } from '../components/RunHistory'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useWorkspace } from '../shell/workspaceStore'
 
 /** The drawer's History tab. Opening a row overlays that run on the main
  * chart immediately (via `runId`, the same field the Backtest tab's result
@@ -37,7 +37,7 @@ export function HistoryPanel() {
         run.id,
       )
     } else {
-      setRunId(run.id)
+      setRunId(run.id, { openBacktestTab: true })
     }
   }
 

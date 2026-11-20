@@ -71,3 +71,32 @@ def test_sortino_is_zero_when_nothing_ever_fell_below_the_target():
     flat = [0.02] * 10          # every day beats the risk-free rate
     metrics = compute_metrics(_records(flat), [], 100_000.0)
     assert metrics['sortino_ratio'] == 0.0
+
+
+def test_zero_return_and_zero_pnl_ratios_are_zero_not_inf():
+    flat_zero = [0.0] * 10
+    zero_trades = [{
+        'net_pnl': 0.0,
+        'open_date': datetime.date(2024, 1, 1),
+        'close_date': datetime.date(2024, 1, 3),
+        'open_price': 100.0,
+        'close_price': 100.0,
+        'size': 1,
+        'symbol': 'SA',
+        'exit_reason': 'signal',
+    }]
+    metrics = compute_metrics(_records(flat_zero), zero_trades, 100_000.0)
+    assert metrics['calmar_ratio'] == 0.0
+    assert metrics['profit_factor'] == 0.0
+    assert metrics['profit_loss_ratio'] == 0.0
+    assert math.isfinite(metrics['annualized_return'])
+
+
+def test_extreme_short_window_return_does_not_overflow():
+    # Huge positive return over 2 calendar days used to raise OverflowError
+    # on (1 + total_return) ** (1 / n_years); it should now complete cleanly.
+    records = _records([0.0, 50.0])
+    metrics = compute_metrics(records, [], 100_000.0)
+    assert metrics['annualized_return'] == float('inf')
+    assert metrics['calmar_ratio'] == float('inf')
+

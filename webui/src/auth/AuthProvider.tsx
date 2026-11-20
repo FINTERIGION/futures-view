@@ -3,6 +3,7 @@ import { useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AUTH_STATUS_KEY, authApi } from '../api/auth'
 import { setUnauthorizedHandler } from '../api/client'
+import { invalidateAlertPreviewCache } from '../panels/alertPreviewStore'
 import { AuthSplash, LoginScreen } from './LoginScreen'
 import './auth.css'
 
@@ -34,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       queryClient.removeQueries({
         predicate: (query) => query.queryKey[0] !== 'auth',
       })
+      invalidateAlertPreviewCache()
     })
     return () => setUnauthorizedHandler(null)
   }, [queryClient])

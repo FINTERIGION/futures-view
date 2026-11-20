@@ -114,7 +114,7 @@ export function IndicatorParamsEditor({
             <div className="field" key={name}>
               <label htmlFor={id}>{name}</label>
               {choices ? (
-                <select id={id} value={draft[name]} onChange={(e) => edit(name, e.target.value)}>
+                <select id={id} value={draft[name] ?? ''} onChange={(e) => edit(name, e.target.value)}>
                   {choices.map((c) => (
                     <option key={String(c)} value={String(c)}>
                       {String(c)}
@@ -128,7 +128,7 @@ export function IndicatorParamsEditor({
                   step={spec?.kind === 'int' ? 1 : 'any'}
                   min={ranged ? spec.low : undefined}
                   max={ranged ? spec.high : undefined}
-                  value={draft[name]}
+                  value={draft[name] ?? ''}
                   className={error ? 'invalid' : undefined}
                   aria-invalid={Boolean(error)}
                   onChange={(e) => edit(name, e.target.value)}

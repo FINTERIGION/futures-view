@@ -7,7 +7,8 @@ import { alertsApi, dataApi, jobsApi, strategiesApi } from '../api/endpoints'
 import type { AlertMonitor, AlertSnapshot } from '../api/types'
 import { MockEventSource } from '../test/setup'
 import { STRATEGIES, renderWorkspace } from '../test/utils'
-import { AlertPanel, resetAlertPreviewState } from './AlertPanel'
+import { AlertPanel } from './AlertPanel'
+import { resetAlertPreviewState } from './alertPreviewStore'
 
 vi.mock('../api/endpoints', () => ({
   strategiesApi: { list: vi.fn() },
@@ -395,5 +396,39 @@ describe('signal summaries, editing, deleting, and refreshing', () => {
     await finishLatestPreview(false)
     await waitFor(() => expect(screen.queryByText('Queued')).not.toBeInTheDocument())
     expect(alertsApi.preview).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers cleanly when the final terminal job fetch fails', async () => {
+    const user = userEvent.setup()
+    seedMonitors([{ id: 'e1', strategy: 'double_ma', symbols: ['SA', 'CF'] }], 'e1')
+    vi.mocked(jobsApi.get).mockRejectedValueOnce(new Error('final fetch failed'))
+    renderPanel()
+
+    await user.click(await screen.findByRole('button', { name: 'Calculate now' }))
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0))
+    MockEventSource.instances.at(-1)!.emit({ type: 'state', status: 'done', progress: 1, message: 'Done' })
+
+    // Inflight state must clear so the refresh action becomes clickable again instead of deadlocking
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Calculate now' })).toBeEnabled())
+  })
+
+  it('prefers a newer server snapshot over an older cached preview', async () => {
+    const user = userEvent.setup()
+    seedMonitors([{ id: 'e1', strategy: 'double_ma', symbols: ['SA', 'CF'] }], 'e1')
+    const first = renderPanel()
+
+    await user.click(await screen.findByRole('button', { name: 'Calculate now' }))
+    await finishLatestPreview()
+    expect(entryRow('double_ma')).toHaveTextContent('2026-10-24')
+    first.unmount()
+
+    // Simulate backend scheduled dispatch writing a newer snapshot than the module-level previewCache
+    const newerSnapshot = { ...SNAPSHOT, asof: '2026-11-19' }
+    seedMonitors(
+      [{ id: 'e1', strategy: 'double_ma', symbols: ['SA', 'CF'], last_snapshot: newerSnapshot, last_checked_at: Date.now() / 1000 + 60 }],
+      'e1',
+    )
+    renderPanel()
+    await waitFor(() => expect(entryRow('double_ma')).toHaveTextContent('2026-11-19'))
   })
 })

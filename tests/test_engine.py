@@ -1200,3 +1200,116 @@ def test_extreme_includes_entry_bar_and_shifts_across_a_roll():
     assert seen[2] == (pytest.approx(132.0), pytest.approx(115.0))
     assert seen[3] == (pytest.approx(132.0), pytest.approx(115.0))
 
+
+def test_distance_brackets_shift_by_roll_basis_instead_of_resetting_to_roll_open():
+    """On a non-flat roll, distance brackets keep their original entry-relative
+    distance shifted by the realized roll basis (new_open - old_open), rather
+    than re-anchoring to the roll day's open price."""
+    n = 4
+    old = {
+        0: (100.0, 102.0, 99.0, 100.0, 100.0, 0, 10),
+        1: (100.0, 118.0, 98.0, 115.0, 115.0, 0, 10),   # entry @100, rallies to 115
+        2: (116.0, 117.0, 114.0, 115.0, 115.0, 0, 10),  # roll bar: old opens @116
+    }
+    new = {
+        2: (136.0, 138.0, 134.0, 135.0, 135.0, 0, 10),  # new opens @136 -> basis = +20
+        3: (135.0, 137.0, 133.0, 136.0, 136.0, 0, 10),
+    }
+    panel = build_panel(
+        'SA', n, weighted={'session': [1.0] * n},
+        contracts={'SA505': old, 'SA509': new},
+        contract_by_bar=['SA505', 'SA505', 'SA509', 'SA509'],
+    )
+    stops = {}
+
+    class _DistStrat(Strategy):
+        def on_bar(self, ctx):
+            if ctx.i == 0:
+                ctx.set_target('SA', 1)
+                ctx.set_stop('SA', distance=5.0)
+                ctx.set_take_profit('SA', distance=50.0)
+            else:
+                tp = ctx._engine.live_tp.get('SA')
+                stops[ctx.i] = (ctx.stop_price('SA'), float(tp['price']) if tp else None)
+
+    eng = Engine(build_market({'SA': panel}, n), _DistStrat(), initial_cash=100_000.0)
+    eng.run_backtest(SetupContext, BarContext)
+
+    # Bar 1: entry @100 -> stop 95, tp 150
+    assert stops[1] == (pytest.approx(95.0), pytest.approx(150.0))
+    # Bar 2: roll basis +20 -> anchor 100+20=120 -> stop 115, tp 170 (NOT 136-5=131!)
+    assert stops[2] == (pytest.approx(115.0), pytest.approx(170.0))
+    assert stops[3] == (pytest.approx(115.0), pytest.approx(170.0))
+
+
+def test_intrabar_stop_preserves_sticky_distance_spec_for_next_trade():
+    """An intrabar stop closes the current trade and pops one-shot price specs,
+    but must keep a sticky distance spec so the next trade still gets armed."""
+    n = 4
+    c = {
+        0: (100.0, 101.0, 99.0, 100.0, 100.0, 0, 10),
+        1: (100.0, 101.0, 90.0, 96.0, 96.0, 0, 10),     # opens @100, low 90 hits distance=5 stop @95
+        2: (100.0, 101.0, 99.0, 100.0, 100.0, 0, 10),   # re-enter long
+        3: (100.0, 101.0, 99.0, 100.0, 100.0, 0, 10),
+    }
+    panel = build_panel('SA', n, weighted={'session': [1.0] * n}, contracts={'SA509': c}, contract_by_bar=['SA509'] * n)
+    eng = _engine(panel, n)
+    eng.pending['SA'] = 1
+    eng.stop_spec['SA'] = {'distance': 5.0}
+    eng.tp_spec['SA'] = {'price': 120.0}
+    _step(eng, 1)
+    assert eng.broker.net_position('SA') == 0
+    assert eng.stop_spec.get('SA') == {'distance': 5.0}
+    assert 'SA' not in eng.tp_spec
+
+
+def test_margin_rejection_from_flat_clears_unbound_price_specs():
+    """If an opening order is rejected for insufficient margin while flat, any
+    unbound absolute-price stop/TP queued with it must be cleared."""
+    n = 3
+    panel = _priced(n)
+    eng = Engine(build_market({'SA': panel}, n), Strategy(), initial_cash=50.0)
+    eng.pending['SA'] = 10
+    eng.stop_spec['SA'] = {'price': 90.0}
+    eng.tp_spec['SA'] = {'distance': 10.0}
+    eng._open_phase(0, datetime.date(2024, 1, 1))
+    assert eng.broker.net_position('SA') == 0
+    assert 'SA' not in eng.stop_spec
+    assert eng.tp_spec.get('SA') == {'distance': 10.0}
+
+
+def test_forced_liquidation_clears_pending_and_deferred_orders():
+    """When settle blows up or liquidates the account, queued orders must not
+    survive into subsequent bars."""
+    n = 3
+    c = {
+        0: (100.0, 100.0, 100.0, 100.0, 100.0, 0, 10),
+        1: (100.0, 100.0, 10.0, 10.0, 10.0, 0, 10),
+        2: (10.0, 10.0, 10.0, 10.0, 10.0, 0, 10),
+    }
+    panel = build_panel('SA', n, weighted={'session': [1.0] * n}, contracts={'SA509': c}, contract_by_bar=['SA509'] * n)
+    eng = Engine(build_market({'SA': panel}, n), Strategy(), initial_cash=1_000.0)
+    eng.pending['SA'] = 1
+    eng._open_phase(0, datetime.date(2024, 1, 1))
+    eng.pending['SA'] = 1
+    eng.deferred['SA'] = 1
+    eng._settle_phase(1, datetime.date(2024, 1, 2))
+    assert eng.blown_up
+    assert eng.pending == {}
+    assert eng.deferred == {}
+
+
+def test_size_for_risk_guards_non_positive_and_non_finite_inputs():
+    eng = _engine(_priced(2), 2)
+    ctx = BarContext(eng, 0, datetime.date(2024, 1, 1))
+    assert ctx.size_for_risk('SA', float('nan'), 0.02) == 0
+    assert ctx.size_for_risk('SA', float('inf'), 0.02) == 0
+    assert ctx.size_for_risk('SA', -5.0, 0.02) == 0
+    assert ctx.size_for_risk('SA', 10.0, 0.0) == 0
+    assert ctx.size_for_risk('SA', 10.0, float('nan')) == 0
+
+    eng_broke = Engine(build_market({'SA': _priced(2)}, 2), Strategy(), initial_cash=-5_000.0)
+    ctx_broke = BarContext(eng_broke, 0, datetime.date(2024, 1, 1))
+    assert ctx_broke.size_for_risk('SA', 10.0, 0.02) == 0
+
+

@@ -98,7 +98,7 @@ class BacktestPlotter:
 
         self._results_dir   = config.get('results_dir', 'results')
         self._strategy_name = config.get('strategy_name', 'strategy')
-        self._ts            = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        self._ts            = config.get('timestamp') or datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
         os.makedirs(self._results_dir, exist_ok=True)
 
@@ -156,43 +156,48 @@ class BacktestPlotter:
 
     def _plot_equity_curve(self) -> str:
         fig, ax = plt.subplots(figsize=(12, 5))
-        df = self._equity_df
+        try:
+            df = self._equity_df
+            if df.empty:
+                ax.text(0.5, 0.5, 'No bars recorded', transform=ax.transAxes,
+                        ha='center', va='center', color='#8b949e')
+            else:
+                ax.plot(df.index, df['equity'], color=COLOR_EQ, linewidth=1.5, label='Equity')
 
-        ax.plot(df.index, df['equity'], color=COLOR_EQ, linewidth=1.5, label='Equity')
+                # Fill the drawdown area
+                running_max = df['equity'].cummax()
+                ax.fill_between(df.index, df['equity'], running_max,
+                                where=(df['equity'] < running_max),
+                                alpha=0.3, color=COLOR_DOWN, label='Drawdown')
+                ax.legend(loc='upper left')
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+                fig.autofmt_xdate()
 
-        # Fill the drawdown area
-        running_max = df['equity'].cummax()
-        ax.fill_between(df.index, df['equity'], running_max,
-                        where=(df['equity'] < running_max),
-                        alpha=0.3, color=COLOR_DOWN, label='Drawdown')
+            ax.set_title(f'{self._strategy_name} - Equity Curve', fontsize=13)
+            ax.set_xlabel('Date')
+            ax.set_ylabel('Equity (CNY)')
+            ax.grid(True, alpha=0.3)
 
-        ax.set_title(f'{self._strategy_name} - Equity Curve', fontsize=13)
-        ax.set_xlabel('Date')
-        ax.set_ylabel('Equity (CNY)')
-        ax.legend(loc='upper left')
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        fig.autofmt_xdate()
-        ax.grid(True, alpha=0.3)
+            # Annotate final metrics below the plot, without clobbering the x-axis label.
+            m = self.metrics or {}
+            info = (
+                f"Total Return: {m.get('total_return', 0):.2f}%  "
+                f"Max Drawdown: {m.get('max_drawdown', 0):.2f}%  "
+                f"Sharpe: {m.get('sharpe_ratio', 0):.3f}"
+            )
+            fig.text(0.5, 0.01, info, ha='center', fontsize=9, color='#8b949e')
 
-        # Annotate final metrics below the plot, without clobbering the x-axis label.
-        m = self.metrics
-        info = (
-            f"Total Return: {m.get('total_return', 0):.2f}%  "
-            f"Max Drawdown: {m.get('max_drawdown', 0):.2f}%  "
-            f"Sharpe: {m.get('sharpe_ratio', 0):.3f}"
-        )
-        fig.text(0.5, 0.01, info, ha='center', fontsize=9, color='#8b949e')
-
-        path = os.path.join(
-            self._results_dir,
-            f"{self._strategy_name}_equity_{self._ts}.png"
-        )
-        fig.tight_layout(rect=[0, 0.05, 1, 1])
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        logger.info("Equity curve saved: %s", path)
-        return path
+            path = os.path.join(
+                self._results_dir,
+                f"{self._strategy_name}_equity_{self._ts}.png"
+            )
+            fig.tight_layout(rect=[0, 0.05, 1, 1])
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            logger.info("Equity curve saved: %s", path)
+            return path
+        finally:
+            plt.close(fig)
 
     # ------------------------------------------------------------------
     # Chart 2: return curve
@@ -200,42 +205,48 @@ class BacktestPlotter:
 
     def _plot_return_curve(self) -> str:
         fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
-        df = self._equity_df
+        try:
+            df = self._equity_df
+            ax1, ax2 = axes[0], axes[1]
+            if df.empty:
+                ax1.text(0.5, 0.5, 'No bars recorded', transform=ax1.transAxes,
+                         ha='center', va='center', color='#8b949e')
+                ax2.text(0.5, 0.5, 'No bars recorded', transform=ax2.transAxes,
+                         ha='center', va='center', color='#8b949e')
+            else:
+                # Top: cumulative return
+                ax1.plot(df.index, df['cum_return'], color=COLOR_EQ, linewidth=1.5)
+                ax1.fill_between(df.index, df['cum_return'], 0,
+                                 where=(df['cum_return'] >= 0), alpha=0.2, color=COLOR_UP)
+                ax1.fill_between(df.index, df['cum_return'], 0,
+                                 where=(df['cum_return'] < 0), alpha=0.2, color=COLOR_DOWN)
+                ax1.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
 
-        # Top: cumulative return
-        ax1 = axes[0]
-        ax1.plot(df.index, df['cum_return'], color=COLOR_EQ, linewidth=1.5)
-        ax1.fill_between(df.index, df['cum_return'], 0,
-                         where=(df['cum_return'] >= 0), alpha=0.2, color=COLOR_UP)
-        ax1.fill_between(df.index, df['cum_return'], 0,
-                         where=(df['cum_return'] < 0), alpha=0.2, color=COLOR_DOWN)
-        ax1.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
-        ax1.set_title(f'{self._strategy_name} - Return Curve', fontsize=13)
-        ax1.set_ylabel('Cumulative Return (%)')
-        ax1.grid(True, alpha=0.3)
+                # Bottom: daily return (bar chart)
+                colors = [COLOR_UP if v >= 0 else COLOR_DOWN for v in df['daily_return'] * 100]
+                ax2.bar(df.index, df['daily_return'] * 100, color=colors, alpha=0.7, width=1)
+                ax2.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
+                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+                fig.autofmt_xdate()
 
-        # Bottom: daily return (bar chart)
-        ax2 = axes[1]
-        colors = [COLOR_UP if v >= 0 else COLOR_DOWN for v in df['daily_return'] * 100]
-        ax2.bar(df.index, df['daily_return'] * 100, color=colors, alpha=0.7, width=1)
-        ax2.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
-        ax2.set_ylabel('Daily Return (%)')
-        ax2.set_xlabel('Date')
-        ax2.grid(True, alpha=0.3)
+            ax1.set_title(f'{self._strategy_name} - Return Curve', fontsize=13)
+            ax1.set_ylabel('Cumulative Return (%)')
+            ax1.grid(True, alpha=0.3)
+            ax2.set_ylabel('Daily Return (%)')
+            ax2.set_xlabel('Date')
+            ax2.grid(True, alpha=0.3)
 
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        fig.autofmt_xdate()
-
-        path = os.path.join(
-            self._results_dir,
-            f"{self._strategy_name}_returns_{self._ts}.png"
-        )
-        fig.tight_layout()
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        logger.info("Return curve saved: %s", path)
-        return path
+            path = os.path.join(
+                self._results_dir,
+                f"{self._strategy_name}_returns_{self._ts}.png"
+            )
+            fig.tight_layout()
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            logger.info("Return curve saved: %s", path)
+            return path
+        finally:
+            plt.close(fig)
 
     # ------------------------------------------------------------------
     # Chart 3: position state
@@ -245,46 +256,49 @@ class BacktestPlotter:
         symbols = self.symbols or ['position']
         n = len(symbols)
         fig, axes = plt.subplots(n, 1, figsize=(12, min(3 * n, 18)), sharex=True, squeeze=False)
-        axes = axes[:, 0]
+        try:
+            axes = axes[:, 0]
 
-        for ax, symbol in zip(axes, symbols):
-            pos = self._position_by_symbol.get(symbol)
-            if pos is None or pos.empty:
-                ax.text(0.5, 0.5, 'No data', transform=ax.transAxes,
-                        ha='center', va='center', color='#8b949e')
-                ax.set_ylabel(symbol)
-                continue
+            for ax, symbol in zip(axes, symbols):
+                pos = self._position_by_symbol.get(symbol)
+                if pos is None or pos.empty:
+                    ax.text(0.5, 0.5, 'No data', transform=ax.transAxes,
+                            ha='center', va='center', color='#8b949e')
+                    ax.set_ylabel(symbol)
+                    continue
 
-            long_mask  = pos > 0
-            short_mask = pos < 0
+                long_mask  = pos > 0
+                short_mask = pos < 0
 
-            ax.fill_between(pos.index, pos, 0, where=long_mask,
-                            alpha=0.5, color=COLOR_UP, label='Long')
-            ax.fill_between(pos.index, pos, 0, where=short_mask,
-                            alpha=0.5, color=COLOR_DOWN, label='Short')
-            ax.step(pos.index, pos, color='#c9d1d9', linewidth=0.8, where='post')
-            ax.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
+                ax.fill_between(pos.index, pos, 0, where=long_mask,
+                                alpha=0.5, color=COLOR_UP, label='Long')
+                ax.fill_between(pos.index, pos, 0, where=short_mask,
+                                alpha=0.5, color=COLOR_DOWN, label='Short')
+                ax.step(pos.index, pos, color='#c9d1d9', linewidth=0.8, where='post')
+                ax.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
 
-            ax.set_title(symbol, fontsize=10, loc='left')
-            ax.set_ylabel('Lots')
-            ax.legend(loc='upper left', fontsize=8)
-            ax.grid(True, alpha=0.3)
+                ax.set_title(symbol, fontsize=10, loc='left')
+                ax.set_ylabel('Lots')
+                ax.legend(loc='upper left', fontsize=8)
+                ax.grid(True, alpha=0.3)
 
-        fig.suptitle(f'{self._strategy_name} - Position by Product', fontsize=13)
-        axes[-1].set_xlabel('Date')
-        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        fig.autofmt_xdate()
+            fig.suptitle(f'{self._strategy_name} - Position by Product', fontsize=13)
+            axes[-1].set_xlabel('Date')
+            if not self._equity_df.empty:
+                axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+                fig.autofmt_xdate()
 
-        path = os.path.join(
-            self._results_dir,
-            f"{self._strategy_name}_position_{self._ts}.png"
-        )
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        logger.info("Position chart saved: %s", path)
-        return path
+            path = os.path.join(
+                self._results_dir,
+                f"{self._strategy_name}_position_{self._ts}.png"
+            )
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            logger.info("Position chart saved: %s", path)
+            return path
+        finally:
+            plt.close(fig)
 
     # ------------------------------------------------------------------
     # Chart 4: price + signals
@@ -294,80 +308,82 @@ class BacktestPlotter:
         symbols = self.symbols or list(self.price_dfs.keys())
         n = len(symbols) or 1
         fig, axes = plt.subplots(n, 1, figsize=(14, min(4 * n, 24)), sharex=True, squeeze=False)
-        axes = axes[:, 0]
+        try:
+            axes = axes[:, 0]
 
-        has_exec = any(
-            self.exec_price_dfs.get(sym) is not None
-            and 'close' in self.exec_price_dfs[sym].columns
-            for sym in symbols
-        )
-
-        for ax, symbol in zip(axes, symbols):
-            price_df = self.price_dfs.get(symbol)
-            if price_df is None or 'close' not in price_df.columns:
-                ax.text(0.5, 0.5, 'No price data', transform=ax.transAxes,
-                        ha='center', va='center', color='#8b949e')
-                ax.set_ylabel(symbol)
-                continue
-
-            price_df = price_df.copy()
-            price_df.index = pd.to_datetime(price_df.index)
-            ax.plot(price_df.index, price_df['close'],
-                    color=COLOR_PRICE, linewidth=1.2, label='Weighted Close', zorder=2)
-
-            exec_df = self.exec_price_dfs.get(symbol)
-            if exec_df is not None and 'close' in exec_df.columns:
-                exec_df = exec_df.copy()
-                exec_df.index = pd.to_datetime(exec_df.index)
-                ax.plot(exec_df.index, exec_df['close'],
-                        color=COLOR_EXEC, linewidth=1.0, linestyle='--',
-                        label='Contract Close', zorder=3, alpha=0.9)
-
-            for sig in self._signals_by_symbol.get(symbol, []):
-                sig_date = pd.to_datetime(sig['date'])
-                sig_price = sig['price']
-                direction = sig['direction']
-                if direction == 'buy':
-                    ax.scatter(sig_date, sig_price, marker='^', color=COLOR_UP,
-                               s=80, zorder=5, label='_nolegend_')
-                elif direction == 'sell':
-                    ax.scatter(sig_date, sig_price, marker='v', color=COLOR_DOWN,
-                               s=80, zorder=5, label='_nolegend_')
-
-            ax.set_title(symbol, fontsize=10, loc='left')
-            ax.set_ylabel('Price')
-            ax.grid(True, alpha=0.3)
-
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], color=COLOR_PRICE, linewidth=1.5, label='Weighted Close'),
-        ]
-        if has_exec:
-            legend_elements.append(
-                Line2D([0], [0], color=COLOR_EXEC, linewidth=1.2,
-                       linestyle='--', label='Contract Close')
+            has_exec = any(
+                self.exec_price_dfs.get(sym) is not None
+                and 'close' in self.exec_price_dfs[sym].columns
+                for sym in symbols
             )
-        legend_elements.extend([
-            plt.scatter([], [], marker='^', color=COLOR_UP,  s=60, label='Long Signal'),
-            plt.scatter([], [], marker='v', color=COLOR_DOWN, s=60, label='Short Signal'),
-        ])
-        axes[0].legend(handles=legend_elements, loc='upper left', fontsize=8)
 
-        fig.suptitle(f'{self._strategy_name} - Price and Trading Signals', fontsize=13)
-        axes[-1].set_xlabel('Date')
-        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        fig.autofmt_xdate()
+            for ax, symbol in zip(axes, symbols):
+                price_df = self.price_dfs.get(symbol)
+                if price_df is None or 'close' not in price_df.columns:
+                    ax.text(0.5, 0.5, 'No price data', transform=ax.transAxes,
+                            ha='center', va='center', color='#8b949e')
+                    ax.set_ylabel(symbol)
+                    continue
 
-        path = os.path.join(
-            self._results_dir,
-            f"{self._strategy_name}_signals_{self._ts}.png"
-        )
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        logger.info("Price & signals chart saved: %s", path)
-        return path
+                price_df = price_df.copy()
+                price_df.index = pd.to_datetime(price_df.index)
+                ax.plot(price_df.index, price_df['close'],
+                        color=COLOR_PRICE, linewidth=1.2, label='Weighted Close', zorder=2)
+
+                exec_df = self.exec_price_dfs.get(symbol)
+                if exec_df is not None and 'close' in exec_df.columns:
+                    exec_df = exec_df.copy()
+                    exec_df.index = pd.to_datetime(exec_df.index)
+                    ax.plot(exec_df.index, exec_df['close'],
+                            color=COLOR_EXEC, linewidth=1.0, linestyle='--',
+                            label='Contract Close', zorder=3, alpha=0.9)
+
+                for sig in self._signals_by_symbol.get(symbol, []):
+                    sig_date = pd.to_datetime(sig['date'])
+                    sig_price = sig['price']
+                    direction = sig['direction']
+                    if direction == 'buy':
+                        ax.scatter(sig_date, sig_price, marker='^', color=COLOR_UP,
+                                   s=80, zorder=5, label='_nolegend_')
+                    elif direction == 'sell':
+                        ax.scatter(sig_date, sig_price, marker='v', color=COLOR_DOWN,
+                                   s=80, zorder=5, label='_nolegend_')
+
+                ax.set_title(symbol, fontsize=10, loc='left')
+                ax.set_ylabel('Price')
+                ax.grid(True, alpha=0.3)
+
+            from matplotlib.lines import Line2D
+            legend_elements = [
+                Line2D([0], [0], color=COLOR_PRICE, linewidth=1.5, label='Weighted Close'),
+            ]
+            if has_exec:
+                legend_elements.append(
+                    Line2D([0], [0], color=COLOR_EXEC, linewidth=1.2,
+                           linestyle='--', label='Contract Close')
+                )
+            legend_elements.extend([
+                plt.scatter([], [], marker='^', color=COLOR_UP,  s=60, label='Long Signal'),
+                plt.scatter([], [], marker='v', color=COLOR_DOWN, s=60, label='Short Signal'),
+            ])
+            axes[0].legend(handles=legend_elements, loc='upper left', fontsize=8)
+
+            fig.suptitle(f'{self._strategy_name} - Price and Trading Signals', fontsize=13)
+            axes[-1].set_xlabel('Date')
+            axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+            axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+            fig.autofmt_xdate()
+
+            path = os.path.join(
+                self._results_dir,
+                f"{self._strategy_name}_signals_{self._ts}.png"
+            )
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            logger.info("Price & signals chart saved: %s", path)
+            return path
+        finally:
+            plt.close(fig)
 
     # ------------------------------------------------------------------
     # Chart 5: four-in-one summary
@@ -375,79 +391,89 @@ class BacktestPlotter:
 
     def _plot_summary(self) -> str:
         fig = plt.figure(figsize=(16, 8))
-        recovery_days = self.metrics.get('max_drawdown_recovery_days')
-        recovery_text = (
-            f'{recovery_days} days'
-            if recovery_days is not None else 'Not recovered'
-        )
-        fig.suptitle(
-            f'{self._strategy_name}  Backtest Summary\n'
-            f'Return: {self.metrics.get("total_return", 0):.2f}%  '
-            f'Sharpe: {self.metrics.get("sharpe_ratio", 0):.3f}  '
-            f'MaxDD: {self.metrics.get("max_drawdown", 0):.2f}%  '
-            f'Recovery: {recovery_text}  '
-            f'WinRate: {self.metrics.get("win_rate", 0):.2f}%  '
-            f'P/L Ratio: {self.metrics.get("profit_loss_ratio", 0):.3f}  '
-            f'Trades: {self.metrics.get("n_trades", 0)}',
-            fontsize=11, color='#c9d1d9', y=0.98
-        )
+        try:
+            m = self.metrics or {}
+            recovery_days = m.get('max_drawdown_recovery_days')
+            recovery_text = (
+                f'{recovery_days} days'
+                if recovery_days is not None else 'Not recovered'
+            )
+            fig.suptitle(
+                f'{self._strategy_name}  Backtest Summary\n'
+                f'Return: {m.get("total_return", 0):.2f}%  '
+                f'Sharpe: {m.get("sharpe_ratio", 0):.3f}  '
+                f'MaxDD: {m.get("max_drawdown", 0):.2f}%  '
+                f'Recovery: {recovery_text}  '
+                f'WinRate: {m.get("win_rate", 0):.2f}%  '
+                f'P/L Ratio: {m.get("profit_loss_ratio", 0):.3f}  '
+                f'Trades: {m.get("n_trades", 0)}',
+                fontsize=11, color='#c9d1d9', y=0.98
+            )
 
-        gs = GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.3)
+            gs = GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.3)
 
-        df = self._equity_df
+            df = self._equity_df
 
-        # 1. Equity curve
-        ax1 = fig.add_subplot(gs[0, :])
-        ax1.plot(df.index, df['equity'], color=COLOR_EQ, linewidth=1.5, label='Equity')
-        running_max = df['equity'].cummax()
-        ax1.fill_between(df.index, df['equity'], running_max,
-                         where=(df['equity'] < running_max),
-                         alpha=0.3, color=COLOR_DOWN, label='Drawdown')
-        ax1.set_title('Equity Curve', fontsize=10)
-        ax1.set_ylabel('Equity (CNY)')
-        ax1.legend(loc='upper left', fontsize=8)
-        ax1.grid(True, alpha=0.3)
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax1.get_xticklabels(), rotation=30, ha='right')
+            # 1. Equity curve
+            ax1 = fig.add_subplot(gs[0, :])
+            if df.empty:
+                ax1.text(0.5, 0.5, 'No bars recorded', transform=ax1.transAxes,
+                         ha='center', va='center', color='#8b949e')
+            else:
+                ax1.plot(df.index, df['equity'], color=COLOR_EQ, linewidth=1.5, label='Equity')
+                running_max = df['equity'].cummax()
+                ax1.fill_between(df.index, df['equity'], running_max,
+                                 where=(df['equity'] < running_max),
+                                 alpha=0.3, color=COLOR_DOWN, label='Drawdown')
+                ax1.legend(loc='upper left', fontsize=8)
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+                plt.setp(ax1.get_xticklabels(), rotation=30, ha='right')
+            ax1.set_title('Equity Curve', fontsize=10)
+            ax1.set_ylabel('Equity (CNY)')
+            ax1.grid(True, alpha=0.3)
 
-        # 2. Cumulative return
-        ax2 = fig.add_subplot(gs[1, 0])
-        ax2.plot(df.index, df['cum_return'], color=COLOR_EQ, linewidth=1.2)
-        ax2.fill_between(df.index, df['cum_return'], 0,
-                         where=(df['cum_return'] >= 0), alpha=0.2, color=COLOR_UP)
-        ax2.fill_between(df.index, df['cum_return'], 0,
-                         where=(df['cum_return'] < 0), alpha=0.2, color=COLOR_DOWN)
-        ax2.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
-        ax2.set_title('Cum. Return', fontsize=10)
-        ax2.set_ylabel('%')
-        ax2.grid(True, alpha=0.3)
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax2.get_xticklabels(), rotation=30, ha='right')
+            # 2. Cumulative return
+            ax2 = fig.add_subplot(gs[1, 0])
+            if df.empty:
+                ax2.text(0.5, 0.5, 'No bars recorded', transform=ax2.transAxes,
+                         ha='center', va='center', color='#8b949e')
+            else:
+                ax2.plot(df.index, df['cum_return'], color=COLOR_EQ, linewidth=1.2)
+                ax2.fill_between(df.index, df['cum_return'], 0,
+                                 where=(df['cum_return'] >= 0), alpha=0.2, color=COLOR_UP)
+                ax2.fill_between(df.index, df['cum_return'], 0,
+                                 where=(df['cum_return'] < 0), alpha=0.2, color=COLOR_DOWN)
+                ax2.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
+                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+                plt.setp(ax2.get_xticklabels(), rotation=30, ha='right')
+            ax2.set_title('Cum. Return', fontsize=10)
+            ax2.set_ylabel('%')
+            ax2.grid(True, alpha=0.3)
 
-        # 3. Daily return
-        ax3 = fig.add_subplot(gs[1, 1])
-        colors = [COLOR_UP if v >= 0 else COLOR_DOWN for v in df['daily_return'] * 100]
-        ax3.bar(df.index, df['daily_return'] * 100, color=colors, alpha=0.7, width=1)
-        ax3.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
-        ax3.set_title('Daily Return', fontsize=10)
-        ax3.set_ylabel('%')
-        ax3.grid(True, alpha=0.3)
-        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax3.get_xticklabels(), rotation=30, ha='right')
+            # 3. Daily return
+            ax3 = fig.add_subplot(gs[1, 1])
+            if df.empty:
+                ax3.text(0.5, 0.5, 'No bars recorded', transform=ax3.transAxes,
+                         ha='center', va='center', color='#8b949e')
+            else:
+                colors = [COLOR_UP if v >= 0 else COLOR_DOWN for v in df['daily_return'] * 100]
+                ax3.bar(df.index, df['daily_return'] * 100, color=colors, alpha=0.7, width=1)
+                ax3.axhline(0, color='#8b949e', linewidth=0.8, linestyle='--')
+                ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+                ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+                plt.setp(ax3.get_xticklabels(), rotation=30, ha='right')
+            ax3.set_title('Daily Return', fontsize=10)
+            ax3.set_ylabel('%')
+            ax3.grid(True, alpha=0.3)
 
-        # Position and price/signals are dropped from the summary: with one
-        # subplot per product they no longer fit a single panel each, and
-        # both charts are already available on their own (see _plot_position
-        # and _plot_price_signals).
-
-        path = os.path.join(
-            self._results_dir,
-            f"{self._strategy_name}_summary_{self._ts}.png"
-        )
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        logger.info("Summary chart saved: %s", path)
-        return path
+            path = os.path.join(
+                self._results_dir,
+                f"{self._strategy_name}_summary_{self._ts}.png"
+            )
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            logger.info("Summary chart saved: %s", path)
+            return path
+        finally:
+            plt.close(fig)

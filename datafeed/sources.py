@@ -33,6 +33,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -341,10 +342,10 @@ def _normalize_columns(columns) -> list:
     seen = {}
     for col in columns:
         key = str(col).replace('﻿', '').strip().replace(' ', '')
-        name = _CZCE_HEADER_MAP.get(key, key)
-        if name in seen:
-            name = f'{name}_{seen[name]}'
-        seen[name] = seen.get(name, 0) + 1
+        base = _CZCE_HEADER_MAP.get(key, key)
+        count = seen.get(base, 0)
+        name = f'{base}_{count}' if count else base
+        seen[base] = count + 1
         mapped.append(name)
     return mapped
 
@@ -424,6 +425,7 @@ class _CzceSource(ExchangeSource):
                 and not is_current
                 and os.path.exists(path)
                 and os.path.getsize(path) > 64
+                and datetime.fromtimestamp(os.path.getmtime(path)).year > year
             ):
                 logger.info('%s%d cache hit, skip download.', self.symbol, year)
                 continue
@@ -481,6 +483,20 @@ class _CzceSource(ExchangeSource):
 # --------------------------------------------------------------------------
 # Shared base for the per-trading-day exchanges (SHFE, DCE)
 # --------------------------------------------------------------------------
+
+_CALENDAR_LOCKS: Dict[str, threading.Lock] = {}
+_CALENDAR_LOCKS_GUARD = threading.Lock()
+
+
+def _calendar_lock(path: str) -> threading.Lock:
+    key = os.path.abspath(path)
+    with _CALENDAR_LOCKS_GUARD:
+        lock = _CALENDAR_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _CALENDAR_LOCKS[key] = lock
+        return lock
+
 
 class _DailyFileSource(ExchangeSource):
     """One cached payload per trading day, shared by every product on the venue.
@@ -569,13 +585,29 @@ class _DailyFileSource(ExchangeSource):
             with open(tmp_path, 'w', encoding='utf-8') as fh:
                 json.dump(state, fh, ensure_ascii=False, indent=2)
 
+    def _merge_write_calendar(
+        self, added_no_data: set, discarded_no_data: set, checked_iso: str,
+    ) -> None:
+        with _calendar_lock(self._calendar_path):
+            state = self._read_calendar()
+            merged = set(state.get('no_data') or ())
+            merged.update(added_no_data)
+            merged.difference_update(discarded_no_data)
+            state['no_data'] = sorted(merged)
+            prev_checked = str(state.get('last_checked') or '')
+            state['last_checked'] = max(prev_checked, checked_iso) if prev_checked else checked_iso
+            self._write_calendar(state)
+
     # -- ExchangeSource ----------------------------------------------------
 
     def sync(self, force: bool = False) -> List[str]:
         os.makedirs(self.dir, exist_ok=True)
         self.failures = []
-        state = self._read_calendar()
+        with _calendar_lock(self._calendar_path):
+            state = self._read_calendar()
         no_data = set(state.get('no_data') or ())
+        added_no_data: set = set()
+        discarded_no_data: set = set()
 
         today = date.today()
         tail_start = today - timedelta(days=_REFETCH_TAIL_DAYS)
@@ -583,48 +615,57 @@ class _DailyFileSource(ExchangeSource):
         refreshed: List[str] = []
         downloaded = 0
 
-        while day <= today:
-            if day.weekday() >= 5:                 # no weekend session to ask about
-                day += timedelta(days=1)
-                continue
-            key = day.isoformat()
-            settled = day < tail_start
-            if not force and settled:
-                if key in no_data or os.path.exists(self.cache_path(day)):
+        try:
+            while day <= today:
+                if day.weekday() >= 5:                 # no weekend session to ask about
                     day += timedelta(days=1)
                     continue
-            try:
-                payload = self._fetch_day(day)
-            except NoDataForDate:
-                no_data.add(key)
+                key = day.isoformat()
+                settled = day < tail_start
+                if not force and settled:
+                    if key in no_data or os.path.exists(self.cache_path(day)):
+                        day += timedelta(days=1)
+                        continue
+                try:
+                    payload = self._fetch_day(day)
+                except NoDataForDate:
+                    # Only permanently mark days past the refetch tail as holidays.
+                    # Unsettled recent days (e.g. today before post-close publication)
+                    # must NOT enter ``no_data`` or they would be skipped forever once
+                    # the tail window moves past them.
+                    if settled:
+                        no_data.add(key)
+                        added_no_data.add(key)
+                        discarded_no_data.discard(key)
+                    time.sleep(self._throttle)
+                    day += timedelta(days=1)
+                    continue
+                except Exception as exc:               # noqa: BLE001 -- retry next run
+                    self.failures.append(key)
+                    logger.warning(
+                        '%s %s fetch failed (%s); left for the next run.',
+                        self.exchange, key, exc,
+                    )
+                    time.sleep(self._throttle)
+                    day += timedelta(days=1)
+                    continue
+                no_data.discard(key)
+                discarded_no_data.add(key)
+                added_no_data.discard(key)
+                downloaded += 1
+                # The trailing days are re-fetched every run in case they were
+                # revised. Only a day whose bytes actually moved counts as
+                # refreshed, so an unchanged re-fetch does not force a rebuild.
+                if payload != self._cached_payload(day):
+                    self._write_day(self.cache_path(day), payload)
+                    refreshed.append(key)
+                if downloaded % 100 == 0:
+                    logger.info('%s %s downloaded (%d days so far)', self.exchange, key, downloaded)
                 time.sleep(self._throttle)
                 day += timedelta(days=1)
-                continue
-            except Exception as exc:               # noqa: BLE001 -- retry next run
-                self.failures.append(key)
-                logger.warning(
-                    '%s %s fetch failed (%s); left for the next run.',
-                    self.exchange, key, exc,
-                )
-                time.sleep(self._throttle)
-                day += timedelta(days=1)
-                continue
-            no_data.discard(key)
-            downloaded += 1
-            # The trailing days are re-fetched every run in case they were
-            # revised. Only a day whose bytes actually moved counts as
-            # refreshed, so an unchanged re-fetch does not force a rebuild.
-            if payload != self._cached_payload(day):
-                self._write_day(self.cache_path(day), payload)
-                refreshed.append(key)
-            if downloaded % 100 == 0:
-                logger.info('%s %s downloaded (%d days so far)', self.exchange, key, downloaded)
-            time.sleep(self._throttle)
-            day += timedelta(days=1)
+        finally:
+            self._merge_write_calendar(added_no_data, discarded_no_data, today.isoformat())
 
-        state['no_data'] = sorted(no_data)
-        state['last_checked'] = today.isoformat()
-        self._write_calendar(state)
         if downloaded:
             logger.info('%s %s: %d day(s) downloaded.', self.exchange, self.symbol, downloaded)
         return refreshed
@@ -637,9 +678,14 @@ class _DailyFileSource(ExchangeSource):
         days = self._cached_days()
         if not days:
             return None
-        day, path = days[-1]
         digest = hashlib.sha256()
-        digest.update(f'{day.isoformat()}:{_file_sha256(path)}'.encode('utf-8'))
+        tail_cutoff = max(0, len(days) - (_REFETCH_TAIL_DAYS + 2))
+        for idx, (day, path) in enumerate(days):
+            if idx >= tail_cutoff:
+                digest.update(f'{day.isoformat()}:{_file_sha256(path)}\n'.encode('utf-8'))
+            else:
+                st = os.stat(path)
+                digest.update(f'{day.isoformat()}:{st.st_size}:{st.st_mtime_ns}\n'.encode('utf-8'))
         return digest.hexdigest()
 
     def load_bars(self) -> pd.DataFrame:
@@ -769,6 +815,7 @@ class _DceAuth:
     def __init__(self) -> None:
         self._token = None
         self._expires_at = 0.0
+        self._lock = threading.Lock()
 
     @staticmethod
     def credentials() -> tuple:
@@ -801,17 +848,20 @@ class _DceAuth:
         return token
 
     def token(self) -> str:
-        if self._token and time.time() < self._expires_at:
-            return self._token
-        return self._login()
+        with self._lock:
+            if self._token and time.time() < self._expires_at:
+                return self._token
+            return self._login()
 
     def headers(self) -> dict:
         key, _ = self.credentials()
         return {'apikey': key, 'Authorization': f'Bearer {self.token()}'}
 
-    def invalidate(self) -> None:
-        self._token = None
-        self._expires_at = 0.0
+    def invalidate(self, failed_token: Optional[str] = None) -> None:
+        with self._lock:
+            if failed_token is None or self._token == failed_token:
+                self._token = None
+                self._expires_at = 0.0
 
 
 class _DceSource(_DailyFileSource):
@@ -862,11 +912,13 @@ class _DceSource(_DailyFileSource):
         url = f'{_DCE_BASE}{path}'
         relogged = False
         for pause in (*_DCE_BACKOFF, None):
-            body = _post_json(url, payload, self._auth.headers())
+            headers = self._auth.headers()
+            body = _post_json(url, payload, headers)
             code = body.get('code')
             if code == _DCE_TOKEN_EXPIRED and not relogged:
                 relogged = True
-                self._auth.invalidate()
+                used_token = headers['Authorization'].removeprefix('Bearer ')
+                self._auth.invalidate(failed_token=used_token)
                 body = _post_json(url, payload, self._auth.headers())
                 code = body.get('code')
             if code == _DCE_RATE_LIMITED:

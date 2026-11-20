@@ -258,3 +258,38 @@ def test_flat_or_closing_after_a_prior_trade_does_not_leak_sticky_distance_specs
     assert flat_after['operation'] == 'flat'
     assert flat_after['stop'] == {'price': None, 'distance': None}
     assert flat_after['take_profit'] == {'price': None, 'distance': None}
+
+
+def test_last_bar_trailing_stop_update_and_cancel_are_reflected_in_snapshot():
+    class _Trailing(Strategy):
+        def __init__(self, mode, **kwargs):
+            super().__init__(**kwargs)
+            self.mode = mode
+
+        def setup(self, ctx):
+            pass
+
+        def on_bar(self, ctx):
+            if ctx.i == 0:
+                ctx.set_target('SA', 1)
+                ctx.set_stop('SA', price=92.0)
+            elif ctx.i == 1:
+                if self.mode == 'trail':
+                    ctx.set_stop('SA', price=97.5)
+                elif self.mode == 'cancel':
+                    ctx.cancel_stop('SA')
+                elif self.mode == 'reverse':
+                    ctx.set_target('SA', -1)
+
+    trailed = _row(run_alert_snapshot(_flat_market(2), _Trailing, {'mode': 'trail'}))
+    assert trailed['operation'] == 'hold'
+    assert trailed['stop'] == {'price': pytest.approx(97.5), 'distance': None}
+
+    cancelled = _row(run_alert_snapshot(_flat_market(2), _Trailing, {'mode': 'cancel'}))
+    assert cancelled['operation'] == 'hold'
+    assert cancelled['stop'] == {'price': None, 'distance': None}
+
+    reversed_row = _row(run_alert_snapshot(_flat_market(2), _Trailing, {'mode': 'reverse'}))
+    assert reversed_row['operation'] == 'reverse'
+    assert reversed_row['stop'] == {'price': None, 'distance': None}
+

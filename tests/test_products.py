@@ -198,3 +198,37 @@ def test_parse_product_result_is_always_costable():
             assert parsed is not None
             product_costs(parsed)                # would raise KeyError if not registered
             roll_rule(parsed)
+
+
+def test_validate_product_rejects_bad_codes_booleans_negative_or_non_finite_costs():
+    from datafeed.products import validate_product
+
+    base = {
+        'exchange': 'CZCE',
+        'name': 'Test',
+        'name_zh': '测试',
+        'start_year': 2020,
+        'multiplier': 10,
+        'tick_size': 1,
+        'margin_rate': 0.1,
+        'commission_rate': 0.0001,
+    }
+    assert validate_product('ZZ', base)['multiplier'] == 10.0
+
+    for bad_code in ('Z1', '123', 'A_B'):
+        with pytest.raises(ValueError):
+            validate_product(bad_code, base)
+
+    for patch in (
+        {'commission_rate': -0.0001},
+        {'commission_rate': float('inf')},
+        {'commission_rate': None, 'commission_per_lot': -1.0},
+        {'commission_rate': None, 'commission_per_lot': float('nan')},
+        {'multiplier': True},
+        {'margin_rate': float('nan')},
+        {'tick_size': float('inf')},
+    ):
+        spec = {**base, **patch}
+        with pytest.raises(ValueError):
+            validate_product('ZZ', spec)
+

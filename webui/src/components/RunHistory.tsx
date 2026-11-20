@@ -8,7 +8,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
 import { Table } from './Table'
 import type { Column } from './Table'
-import { useToast } from './Toast'
+import { useToast } from './toastStore'
 
 function formatMetric(v: unknown): string {
   if (v === null || v === undefined) return '—'

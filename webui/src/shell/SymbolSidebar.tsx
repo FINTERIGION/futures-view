@@ -5,10 +5,10 @@ import { errorMessage } from '../api/client'
 import { dataApi, productsApi } from '../api/endpoints'
 import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
-import { useToast } from '../components/Toast'
-import { useJobSlot } from './JobsProvider'
+import { useToast } from '../components/toastStore'
+import { useJobLifecycle, useJobSlot } from './jobsStore'
 import { ProductRow } from './ProductRow'
-import { useWorkspace } from './WorkspaceContext'
+import { useWorkspace } from './workspaceStore'
 
 /** Placeholder rows, shaped like the real ones, for the first load. An empty
  * panel that suddenly fills is harder to read than one that was already the
@@ -45,6 +45,7 @@ export function SymbolSidebar() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const job = useJobSlot('data')
+  const lifecycle = useJobLifecycle()
   const [query, setQuery] = useState('')
   const [activeCode, setActiveCode] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -64,31 +65,21 @@ export function SymbolSidebar() {
     setChartSymbol((withData[0] ?? products[0]).code)
   }, [chartSymbol, products, setChartSymbol])
 
-  // The last job this panel has already announced. Re-invalidating a query is
-  // idempotent, but raising a toast is not: this effect re-runs on every
-  // render while the status sits at `done`, which would otherwise stack one
-  // notice per render until the next job started.
-  const announcedJob = useRef<string | null>(null)
-
+  // Shares `lifecycle.announced` with `ChartWorkspace` so collapsing and
+  // reopening the sidebar neither misses an update nor duplicates its toast or
+  // refetches.
   useEffect(() => {
-    // Every terminal status, not just `done`: a run that fails or is
-    // cancelled partway has already rewritten the products before that
-    // point, and the backend drops its own caches on every exit too.
     const state = job.state
     if (!state || !['done', 'error', 'cancelled'].includes(state.status)) return
+    if (!lifecycle.claimAnnouncement(`data:${state.id}:${state.status}`)) return
     void queryClient.invalidateQueries({ queryKey: ['products'] })
     void queryClient.invalidateQueries({ queryKey: ['product-bars'] })
     void queryClient.invalidateQueries({ queryKey: ['product-roll'] })
-    // Indicator values are computed off those same bars. Left cached, the
-    // candles gain the new days while every indicator stops short of them
-    // for the rest of its staleTime.
     void queryClient.invalidateQueries({ queryKey: ['indicator'] })
-    if (state.status !== 'done' || announcedJob.current === state.id) return
-    announcedJob.current = state.id
-    // The sidebar's own progress block clears with the next job, and the
-    // sidebar may be collapsed to its rail, so say so where it can be seen.
-    toast.push({ kind: 'success', title: t('data.updateDone') })
-  }, [job.state, queryClient, toast, t])
+    if (state.status === 'done') {
+      toast.push({ kind: 'success', title: t('data.updateDone') })
+    }
+  }, [job.state, lifecycle, queryClient, toast, t])
 
   const runUpdate = async (symbols: string[]) => {
     // This request really can be refused, and used to be refused in
@@ -238,7 +229,7 @@ export function SymbolSidebar() {
             product={p}
             isCharted={p.code === chartSymbol}
             inUniverse={universe.includes(p.code)}
-            isActive={p.code === active && Boolean(query)}
+            isActive={p.code === active && (Boolean(query) || activeCode !== null)}
             onSetChart={() => chartProduct(p.code)}
             onToggleUniverse={() => toggleUniverse(p.code)}
             onEdit={() => setEditingProduct(p.code)}
@@ -273,7 +264,11 @@ export function SymbolSidebar() {
             <Icon name="download" size={14} />
             {t('data.update')} ({universe.length})
           </button>
-          <button className="btn btn-sm" onClick={() => void runUpdate((products ?? []).map((p) => p.code))} disabled={job.isActive}>
+          <button
+            className="btn btn-sm"
+            onClick={() => void runUpdate((products ?? []).map((p) => p.code))}
+            disabled={job.isActive || !products?.length}
+          >
             {t('data.updateAll')}
           </button>
         </div>

@@ -188,3 +188,22 @@ def test_every_fill_leaves_a_usable_mark():
         pos = b.positions.get(('SA', 'SA509'))
         if pos is not None:
             assert pos.last_mark == pytest.approx(price)
+
+
+def test_can_afford_accounts_for_commission_and_open_gap_while_allowing_closes():
+    b = Broker(10_000.0)
+    # SA: mult=20, margin=0.11, comm_rate=1e-4 -> 1 lot @1000 costs 2200 margin + 2 comm
+    assert b.can_afford('SA', 'SA509', 4, 1000.0)
+    # Tight cash: exactly enough for margin alone, but not margin + commission
+    tight = Broker(2200.0)
+    assert not tight.can_afford('SA', 'SA509', 1, 1000.0)
+
+    # Open 2 long @1000 (equity=10_000, margin=4400, avail=5596)
+    b.fill('SA', 'SA509', 2, 1000.0, 0, D)
+    b.positions[('SA', 'SA509')].last_mark = 1000.0
+    # Huge gap down to 700 -> open-gap loss is -300 * 2 * 20 = -12_000 (underwater)
+    # Adding must be refused, while reducing/closing is still allowed.
+    assert not b.can_afford('SA', 'SA509', 1, 700.0)
+    assert b.can_afford('SA', 'SA509', -2, 700.0)
+    assert b.can_afford('SA', 'SA509', -1, 700.0)
+

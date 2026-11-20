@@ -158,8 +158,11 @@ def coerce_param(name: str, default, spec: Spec, value):
     if isinstance(spec, Categorical):
         # Compare as strings: `parse_param_value` may have cast the token
         # (`'12'` -> `12`) to a type the choice was not declared as. Then hand
-        # back the declared object rather than the parsed one.
+        # back the declared object rather than the parsed one. Also map JSON
+        # `'null'` back to `None` when `None` is a declared choice.
         for choice in spec.choices:
+            if choice is None and (value is None or str(value) in ('None', 'null')):
+                return None
             if str(choice) == str(value):
                 return choice
         raise ValueError(f'{name!r} must be one of {[str(c) for c in spec.choices]}')
@@ -167,7 +170,7 @@ def coerce_param(name: str, default, spec: Spec, value):
     # `spec` is an Int or a Float from here on, so the value has to be a
     # number whatever the default's type: a `None` default ("pick a window
     # yourself") still reaches TA-Lib as one.
-    is_int = isinstance(default, int)
+    is_int = isinstance(spec, Int)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f'{name!r} expects {"an integer" if is_int else "a number"}')
     # `parse_param_value('period=1e400')` casts cleanly to inf, and
@@ -178,7 +181,7 @@ def coerce_param(name: str, default, spec: Spec, value):
         if value != int(value):
             raise ValueError(f'{name!r} expects an integer')
         value = int(value)
-    elif isinstance(default, float):
+    elif isinstance(spec, Float) or isinstance(default, float):
         value = float(value)
 
     if not (spec.low <= value <= spec.high):

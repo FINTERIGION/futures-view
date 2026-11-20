@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { alertsApi, backtestApi, dataApi, indicatorsApi, jobsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
 import { MockEventSource } from '../test/setup'
 import { INDICATORS, PRODUCTS, STRATEGIES, renderWorkspace, runDetail, runRow } from '../test/utils'
-import { resetAlertPreviewState } from '../panels/AlertPanel'
+import { resetAlertPreviewState } from '../panels/alertPreviewStore'
 import { ChartWorkspace } from './ChartWorkspace'
 
 vi.mock('../api/endpoints', () => ({
@@ -526,5 +526,38 @@ describe('a finished data update', () => {
 
     await waitFor(() => expect(indicatorsApi.values).toHaveBeenCalledTimes(2))
     expect(screen.queryByText('Data update finished')).not.toBeInTheDocument()
+  })
+
+  it('does not duplicate the completion toast when collapsing and reopening the sidebar', async () => {
+    vi.mocked(dataApi.update).mockResolvedValue({ job_id: 'd-once' })
+    vi.mocked(jobsApi.get).mockResolvedValue({
+      id: 'd-once', kind: 'data_update', status: 'done', progress: 1, message: 'Done', error: null,
+      created_at: 0, started_at: 0, finished_at: 0, cancel_requested: false, result: {},
+    })
+
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+
+    await user.click(await screen.findByRole('button', { name: 'Update All' }))
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1))
+    MockEventSource.instances[0].emit({ type: 'state', status: 'done', progress: 1, message: 'Done' })
+
+    await waitFor(() => expect(screen.getAllByText('Data update finished')).toHaveLength(1))
+    await user.click(within(screen.getByRole('complementary')).getByTitle('Collapse'))
+    await user.click(screen.getByRole('button', { name: 'Products' }))
+    expect(screen.getAllByText('Data update finished')).toHaveLength(1)
+  })
+
+  it('suppresses global hotkeys such as Ctrl+Enter while a modal dialog is open', async () => {
+    const user = userEvent.setup()
+    vi.mocked(backtestApi.start).mockClear()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    await screen.findByRole('button', { name: 'Run Backtest' })
+    await user.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    expect(backtestApi.start).not.toHaveBeenCalled()
   })
 })

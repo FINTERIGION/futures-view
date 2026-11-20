@@ -39,5 +39,5 @@ Loaded at import into `datafeed.products.PRODUCTS`. Managed via `list_products()
 | `margin_rate` | `float` | Initial margin ratio (fraction of notional) |
 | `commission_rate` | `float` (optional) | Commission as fraction of notional |
 | `commission_per_lot` | `float` (optional) | Fixed commission in CNY per lot |
-| `main_months` | `list[int]` | Active delivery months (e.g., `[1, 5, 9]`) |
-| `roll_lead_months` | `int` | Months before delivery month to roll out (rolls on the 1st calendar day of `delivery_month - roll_lead_months`) |
+| `main_months` | `list[int]` (optional) | Active delivery months (default `[1, 5, 9]`) |
+| `roll_lead_months` | `int` (optional) | Months before delivery month to roll out (default `1`; rolls on the 1st calendar day of `delivery_month - roll_lead_months`) |

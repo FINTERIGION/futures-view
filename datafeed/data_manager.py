@@ -282,11 +282,18 @@ class DataManager:
         is dropped for a missing price, never for merely not trading.
         """
         cols = [c for c in ('open', 'high', 'low', 'close') if c in raw.columns]
-        keep = raw[cols].notna().all(axis=1)
+        numeric = raw[cols].apply(pd.to_numeric, errors='coerce')
+        keep = numeric.notna().all(axis=1) & (numeric > 0).all(axis=1)
         dropped = int((~keep).sum())
         if dropped:
-            logger.debug('%s: dropped %d contract row(s) with a blank open/high/low/close', symbol, dropped)
-        return raw[keep]
+            logger.debug('%s: dropped %d contract row(s) with missing or non-positive OHLC', symbol, dropped)
+        out = raw[keep].copy()
+        if 'settle' in out.columns and 'close' in out.columns:
+            settle = pd.to_numeric(out['settle'], errors='coerce')
+            bad_settle = settle.isna() | (settle <= 0)
+            if bad_settle.any():
+                out.loc[bad_settle, 'settle'] = out.loc[bad_settle, 'close']
+        return out
 
     def _bundle_symbol(
         self,

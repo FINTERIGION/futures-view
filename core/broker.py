@@ -161,12 +161,11 @@ class Broker:
     def can_afford(self, symbol: str, contract: str, size: int, price: float) -> bool:
         """Whether filling ``size`` lots at ``price`` leaves the account solvent.
 
-        An order that does not *raise* the margin requirement always passes --
-        closes, reductions, and flips into a cheaper leg. That exemption is the
-        point: a hard rejection must never trap a position inside a margin
-        call, which is exactly when the account most needs to get out. Anything
-        that raises the requirement has to leave ``equity >= margin_used`` once
-        filled, or it is refused.
+        Closing or reducing an existing position always passes so a hard
+        rejection can never trap a position inside a margin call. Any order
+        that opens, adds, or reverses must leave post-fill equity (adjusted
+        for the fill's commission and any open-gap move since ``last_mark``)
+        at or above the resulting margin requirement.
 
         Only strategy orders are put through this. A roll is the same exposure
         on a different contract and a forced liquidation is the remedy for
@@ -175,11 +174,22 @@ class Broker:
         equity, margin_used, _ = self.valuation()
         pos = self.positions.get((symbol, contract))
         held = pos.size if pos is not None else 0
-        before = self.margin_for(symbol, held, pos.last_mark) if pos is not None else 0.0
-        after = margin_used - before + self.margin_for(symbol, held + size, price)
-        if after <= margin_used:
+        after_size = held + size
+        is_reducing = (
+            held != 0
+            and (held > 0) != (size > 0)
+            and abs(after_size) < abs(held)
+            and (after_size == 0 or (after_size > 0) == (held > 0))
+        )
+        if is_reducing:
             return True
-        return equity - after >= 0
+        before = self.margin_for(symbol, held, pos.last_mark) if pos is not None else 0.0
+        after = margin_used - before + self.margin_for(symbol, after_size, price)
+        mult = product_costs(symbol)['multiplier']
+        gap_pnl = (price - pos.last_mark) * held * mult if pos is not None else 0.0
+        comm = self.commission(symbol, abs(size), price)
+        est_equity = equity + gap_pnl - comm
+        return est_equity - after >= 0
 
     def force_liquidate(
         self, bar_index: int, date: Date,

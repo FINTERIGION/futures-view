@@ -26,6 +26,6 @@ describe('the login screen', () => {
     await user.type(screen.getByLabelText('Password'), 'guess-wrong')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
 
-    expect(await screen.findByText('Too many attempts. Wait a minute and try again.')).toBeInTheDocument()
+    expect(await screen.findByText('Too many attempts. Wait 5 minutes and try again.')).toBeInTheDocument()
   })
 })

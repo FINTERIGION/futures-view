@@ -68,21 +68,62 @@ def _as_date(np_date):
     return pd.Timestamp(np_date).date()
 
 
-def _bracket_level(live: Optional[dict], spec: Optional[dict]) -> dict:
-    """Prefer a resting absolute price; otherwise report the unarmed rule.
+def _bracket_level(
+    live: Optional[dict],
+    spec: Optional[dict],
+    *,
+    operation: str,
+    owner_entry: Optional[tuple] = None,
+    base_price: Optional[float] = None,
+    position: int = 0,
+    sign: int = -1,
+) -> dict:
+    """Resolve the stop or take-profit that will apply after the last bar.
 
-    A distance that has not armed yet (a new position still sitting in
-    ``pending``) cannot be a price -- the fill has not happened -- so it
-    is returned as ``distance`` and the UI prints it as "next open ±d".
+    Matches ``Engine._arm_brackets`` semantics so the snapshot reflects the
+    final bar's ``on_bar`` updates rather than yesterday's stale resting order:
+    - No active ``spec`` -> no bracket (even if ``live`` existed earlier).
+    - Reversing into a new trade -> an old trade's bound ``price`` rule is
+      spent (dropped at next open), a freshly set ``price`` applies directly,
+      and a ``distance`` rule is returned unarmed ("next open ±d").
+    - Opening from flat -> absolute ``price`` or unarmed ``distance``.
+    - Holding / adding / reducing -> ``spec['price']`` overrides any stale
+      ``live['price']``; a ``distance`` rule uses ``live['price']`` when its
+      distance is unchanged, else re-resolves off the current position anchor.
     """
-    if live and live.get('price') is not None:
-        return {'price': float(live['price']), 'distance': None}
     if not spec:
         return {'price': None, 'distance': None}
+
+    if operation == 'reverse':
+        if 'price' in spec:
+            if owner_entry is not None and owner_entry[0] is spec:
+                return {'price': None, 'distance': None}
+            return {'price': float(spec['price']), 'distance': None}
+        if 'distance' in spec:
+            return {'price': None, 'distance': float(spec['distance'])}
+        return {'price': None, 'distance': None}
+
+    if operation in ('open_long', 'open_short'):
+        if 'price' in spec:
+            return {'price': float(spec['price']), 'distance': None}
+        if 'distance' in spec:
+            return {'price': None, 'distance': float(spec['distance'])}
+        return {'price': None, 'distance': None}
+
+    # hold / add / reduce on an existing position
     if 'price' in spec:
         return {'price': float(spec['price']), 'distance': None}
     if 'distance' in spec:
-        return {'price': None, 'distance': float(spec['distance'])}
+        dist = float(spec['distance'])
+        if live and live.get('price') is not None:
+            anchor = live.get('anchor')
+            if isinstance(anchor, tuple) and len(anchor) == 4 and anchor[3] == dist:
+                return {'price': float(live['price']), 'distance': None}
+        if base_price is not None and position != 0:
+            offset = sign * dist
+            price = base_price + offset if position > 0 else base_price - offset
+            return {'price': float(price), 'distance': None}
+        return {'price': None, 'distance': dist}
     return {'price': None, 'distance': None}
 
 
@@ -147,6 +188,7 @@ def _snapshot_from_engine(engine: Engine) -> dict:
         has_exposure = (position + pending) != 0
         contract = _trading_contract(engine, sym, last_i)
         pos = _held_position(engine, sym)
+        base_price = engine._distance_base(sym, contract) if (pos is not None and contract) else None
         rows.append({
             'symbol': sym,
             'contract': contract,
@@ -155,11 +197,27 @@ def _snapshot_from_engine(engine: Engine) -> dict:
             'entry_price': float(pos.avg_entry) if pos is not None else None,
             'last_price': _last_contract_price(engine, sym, contract, last_i, pos),
             'stop': (
-                _bracket_level(engine.live_stop.get(sym), engine.stop_spec.get(sym))
+                _bracket_level(
+                    engine.live_stop.get(sym),
+                    engine.stop_spec.get(sym),
+                    operation=operation,
+                    owner_entry=engine.stop_owner.get(sym),
+                    base_price=base_price,
+                    position=position,
+                    sign=-1,
+                )
                 if has_exposure else {'price': None, 'distance': None}
             ),
             'take_profit': (
-                _bracket_level(engine.live_tp.get(sym), engine.tp_spec.get(sym))
+                _bracket_level(
+                    engine.live_tp.get(sym),
+                    engine.tp_spec.get(sym),
+                    operation=operation,
+                    owner_entry=engine.tp_owner.get(sym),
+                    base_price=base_price,
+                    position=position,
+                    sign=+1,
+                )
                 if has_exposure else {'price': None, 'distance': None}
             ),
         })

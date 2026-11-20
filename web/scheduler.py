@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, time as dt_time, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Callable, List, Optional
 
 from web import store
-from web.alert_service import get_schedule, resolve_timezone, submit_alert_dispatch
+from web.alert_service import (
+    DEFAULT_SCHEDULE,
+    get_schedule,
+    resolve_timezone,
+    submit_alert_dispatch,
+)
 from web.config import ALERT_SCHEDULER_GRACE_SECONDS, ALERT_SCHEDULER_POLL_SECONDS
 
 logger = logging.getLogger('futuresview.web')
@@ -63,7 +68,8 @@ class AlertScheduler:
             thread.join(timeout=timeout)
             logger.info('Alert scheduler stopped.')
         with self._lock:
-            self._thread = None
+            if self._thread is thread:
+                self._thread = None
 
     def notify_config_changed(self) -> None:
         """Wake the loop promptly after schedule settings are edited."""
@@ -75,41 +81,62 @@ class AlertScheduler:
         if not schedule.get('enabled') or not schedule.get('times'):
             return []
 
-        tz = resolve_timezone(schedule['timezone'])
-        local_now = (now or self._now_fn()).astimezone(tz)
-        if schedule.get('weekdays_only', True) and local_now.weekday() >= 5:
-            return []
+        tz_name = schedule['timezone']
+        tz = resolve_timezone(tz_name)
+        utc_now = (now or self._now_fn()).astimezone(timezone.utc)
+        local_now = utc_now.astimezone(tz)
+        weekdays_only = bool(schedule.get('weekdays_only', True))
+
+        # Check today, plus yesterday when within the grace window of midnight
+        # so late-night slots like 23:59 are never dropped after 00:00.
+        today = local_now.date()
+        candidate_dates = [today]
+        midnight_utc = datetime.combine(today, dt_time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+        if (utc_now - midnight_utc).total_seconds() < self._grace_seconds:
+            candidate_dates.insert(0, today - timedelta(days=1))
 
         fired: List[str] = []
-        today = local_now.date()
-        for hhmm in schedule['times']:
-            hour_s, min_s = hhmm.split(':', 1)
-            slot_dt = datetime.combine(today, dt_time(int(hour_s), int(min_s)), tzinfo=tz)
-            delta = (local_now - slot_dt).total_seconds()
-            if 0.0 <= delta < self._grace_seconds:
-                slot_key = f'{today.isoformat()} {hhmm}'
-                delivery_id = store.claim_alert_delivery(
-                    trigger='schedule', scheduled_slot=slot_key,
+        for slot_date in candidate_dates:
+            if weekdays_only and slot_date.weekday() >= 5:
+                continue
+            for hhmm in schedule['times']:
+                hour_s, min_s = hhmm.split(':', 1)
+                slot_dt = datetime.combine(
+                    slot_date, dt_time(int(hour_s), int(min_s)), tzinfo=tz,
                 )
-                if delivery_id is None:
-                    continue
-                logger.info('Alert scheduler firing slot %s (delivery=%s).', slot_key, delivery_id)
-                try:
-                    self._dispatch_fn(
-                        trigger='schedule',
-                        scheduled_slot=slot_key,
-                        delivery_id=delivery_id,
+                # Subtract in UTC so PEP 495 DST fall-back transitions use true
+                # elapsed seconds rather than ambiguous wall-clock arithmetic.
+                delta = (utc_now - slot_dt.astimezone(timezone.utc)).total_seconds()
+                if 0.0 <= delta < self._grace_seconds:
+                    slot_key = (
+                        f'{slot_date.isoformat()} {hhmm}'
+                        if tz_name == DEFAULT_SCHEDULE['timezone']
+                        else f'{slot_date.isoformat()} {hhmm} ({tz_name})'
                     )
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception('Alert scheduler failed to dispatch slot %s', slot_key)
-                    store.finish_alert_delivery(
-                        delivery_id,
-                        status='error',
-                        error=str(exc),
-                        summary=f'Failed to start scheduled dispatch: {exc}',
+                    delivery_id = store.claim_alert_delivery(
+                        trigger='schedule', scheduled_slot=slot_key,
                     )
-                    continue
-                fired.append(slot_key)
+                    if delivery_id is None:
+                        continue
+                    logger.info('Alert scheduler firing slot %s (delivery=%s).', slot_key, delivery_id)
+                    try:
+                        self._dispatch_fn(
+                            trigger='schedule',
+                            scheduled_slot=slot_key,
+                            delivery_id=delivery_id,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception('Alert scheduler failed to dispatch slot %s', slot_key)
+                        # Custom dispatch_fn may not have finalized the delivery row.
+                        if self._dispatch_fn is not submit_alert_dispatch:
+                            store.finish_alert_delivery(
+                                delivery_id,
+                                status='error',
+                                error=str(exc),
+                                summary=f'Failed to start scheduled dispatch: {exc}',
+                            )
+                        continue
+                    fired.append(slot_key)
         return fired
 
     def _loop(self) -> None:

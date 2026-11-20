@@ -1,23 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon, type IconName } from './Icon'
-
-export type ToastKind = 'success' | 'error' | 'info'
-
-export interface Toast {
-  id: number
-  kind: ToastKind
-  title: string
-  message?: string
-}
-
-interface ToastApi {
-  /** Show a toast. Returns nothing on purpose -- a caller that wants to take
-   * the message back should not have raised it as a toast. */
-  push: (toast: Omit<Toast, 'id'>) => void
-}
-
-const ToastContext = createContext<ToastApi | null>(null)
+import { ToastContext, type Toast, type ToastKind } from './toastStore'
 
 const ICONS: Record<ToastKind, IconName> = {
   success: 'success',
@@ -25,34 +9,23 @@ const ICONS: Record<ToastKind, IconName> = {
   info: 'info',
 }
 
-/** How long a toast stays up. Errors linger: they usually carry a server
- * message worth reading twice, and there is no other copy of it on screen. */
 const TTL: Record<ToastKind, number> = {
   success: 4000,
   error: 9000,
   info: 6000,
 }
 
-/**
- * Transient, corner-of-the-screen notices.
- *
- * This replaces the `window.alert` calls the run list used to make. An alert
- * blocks the whole tab -- including the SSE stream of any job still running
- * behind it -- until it is dismissed, it cannot be styled, and it says
- * "localhost:8888 says" above whatever the server actually reported. It is
- * also the wrong shape for the two things this panel needs to announce: a
- * request the server refused, and a job that finished while the viewer was
- * looking at a different tab. Neither is a question.
- */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const nextId = useRef(1)
-  // Cleared on unmount so a timer cannot fire into a torn-down tree -- the
-  // usual "setState on an unmounted component" leak in test runs, where a
-  // provider is mounted and dropped once per case.
-  const timers = useRef<number[]>([])
+  const timers = useRef<Map<number, number>>(new Map())
 
   const dismiss = useCallback((id: number) => {
+    const timer = timers.current.get(id)
+    if (timer !== undefined) {
+      window.clearTimeout(timer)
+      timers.current.delete(id)
+    }
     setToasts((prev) => prev.filter((toast) => toast.id !== id))
   }, [])
 
@@ -60,14 +33,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (toast: Omit<Toast, 'id'>) => {
       const id = nextId.current++
       setToasts((prev) => [...prev, { ...toast, id }])
-      timers.current.push(window.setTimeout(() => dismiss(id), TTL[toast.kind]))
+      const timer = window.setTimeout(() => {
+        timers.current.delete(id)
+        setToasts((prev) => prev.filter((t) => t.id !== id))
+      }, TTL[toast.kind])
+      timers.current.set(id, timer)
     },
-    [dismiss],
+    [],
   )
 
   useEffect(
     () => () => {
       timers.current.forEach((timer) => window.clearTimeout(timer))
+      timers.current.clear()
     },
     [],
   )
@@ -79,9 +57,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       {toasts.length > 0 &&
         createPortal(
-          // `polite`, not `alert`: these announce completed work, and an
-          // assertive live region interrupts whatever a screen reader is
-          // already in the middle of saying.
           <div className="toast-stack" role="status" aria-live="polite">
             {toasts.map((toast) => (
               <div key={toast.id} className={`toast toast-${toast.kind}`} onClick={() => dismiss(toast.id)}>
@@ -99,10 +74,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         )}
     </ToastContext.Provider>
   )
-}
-
-export function useToast(): ToastApi {
-  const ctx = useContext(ToastContext)
-  if (!ctx) throw new Error('useToast must be used within a ToastProvider')
-  return ctx
 }

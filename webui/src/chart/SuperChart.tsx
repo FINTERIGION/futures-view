@@ -8,7 +8,7 @@ import { MAX_SUB_PANES, superChartOption, type IndicatorLayer, type PaneKey } fr
 import { EChart } from '../components/EChart'
 import { Icon } from '../components/Icon'
 import { useIsDarkMode } from '../theme/useIsDarkMode'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useWorkspace } from '../shell/workspaceStore'
 import { ChartToolbar } from './ChartToolbar'
 import { activeOverrides } from './indicatorParams'
 

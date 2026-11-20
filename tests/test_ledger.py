@@ -149,3 +149,27 @@ def test_finish_books_every_leg_a_symbol_still_holds():
     assert trade['gross_pnl'] == pytest.approx(200.0 + 100.0)
     equity, _, _ = b.valuation()
     assert abs(lg.reconciliation_drift(equity, 100_000.0)) < 1e-6
+
+
+def test_same_direction_scale_in_does_not_book_add_as_partial_close():
+    """Adding to an existing position in the same direction must accumulate
+    into entry_qty/open_price and margin_used rather than being recorded as a
+    closing leg (which inverted close_price and size)."""
+    b = Broker(200_000.0)
+    lg = Ledger()
+
+    _do(b, lg, 'SA', 'SA509', 2, 100.0, 0)    # open long 2 @100
+    _do(b, lg, 'SA', 'SA509', 3, 120.0, 1)    # scale in long +3 @120 -> 5 lots, avg 112
+    _do(b, lg, 'SA', 'SA509', -5, 130.0, 2)   # close all 5 @130
+
+    assert len(lg.trades) == 1
+    trade = lg.trades[0]
+    assert trade['direction'] == 'long'
+    assert trade['size'] == 5
+    assert trade['open_price'] == pytest.approx(112.0)
+    assert trade['close_price'] == pytest.approx(130.0)
+    # gross_pnl = (130 - 112) * 5 * 20 = 1800
+    assert trade['gross_pnl'] == pytest.approx(1800.0)
+    equity, _, _ = b.valuation()
+    assert abs(lg.reconciliation_drift(equity, 200_000.0)) < 1e-6
+

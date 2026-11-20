@@ -11,7 +11,7 @@
 ## Features
 
 - **Specialized for Futures Market.** Signals compute on a smooth open-interest–weighted continuous series while orders fill on actual rolling main contracts, with contract multipliers, margin, commissions, roll rules, and forced liquidation settings.
-- **All-in-One Workspace.** Manage data downloads, overlay indicators, track signal snapshots, and run backtests in a single screen where fills, roll points, equity curves, and trade logs all stay linked to the same chart.
+- **All-in-One Workspace.** Manage data downloads, overlay indicators, track signals, set Webhook alerts, and run backtests in a single screen where fills, roll points, equity curves, and trade logs all stay linked to the same chart.
 - **Your Panel, Your Way.** Drop your own Python class into `indicators/` or `strategies/` and hot-reloaded parameter spaces automatically become interactive UI controls and chart panes, alongside editable product specs and signals.
 
 ## Quick Start
@@ -55,6 +55,7 @@ The same functions also run without a browser. Backtest outputs (charts, trade l
 ```bash
 python main.py data
 python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --strategy double_ma --cash 100000
+python main.py alert
 ```
 
 ## Documentation

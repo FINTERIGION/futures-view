@@ -44,12 +44,11 @@ export function baseOption(dark: boolean): EChartsOption {
 // chart-building helper isn't worth it -- the public builder functions in
 // builders.ts are still typed to return `EChartsOption`, which is what
 // callers (EChart and the chart components) actually consume.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function valueAxis(dark: boolean, overrides: any = {}) {
+export function valueAxis(dark: boolean, overrides: Record<string, unknown> = {}) {
   const { ink } = chartTokens(dark)
   // `axisLabel` is merged rather than replaced: callers override only the
   // formatter and still want the themed color/size.
-  const { axisLabel, ...rest } = overrides
+  const { axisLabel, ...rest } = overrides as { axisLabel?: Record<string, unknown>; [key: string]: unknown }
   return {
     type: 'value' as const,
     axisLine: { show: false },
@@ -60,8 +59,7 @@ export function valueAxis(dark: boolean, overrides: any = {}) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function categoryAxis(dark: boolean, data: unknown[], overrides: any = {}) {
+export function categoryAxis(dark: boolean, data: (string | number)[], overrides: Record<string, unknown> = {}) {
   const { ink } = chartTokens(dark)
   return {
     type: 'category' as const,

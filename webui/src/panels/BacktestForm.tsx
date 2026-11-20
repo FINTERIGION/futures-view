@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { StrategyInfo } from '../api/types'
 import type { ParamFieldErrors } from '../chart/indicatorParams'
@@ -79,6 +80,7 @@ export function BacktestForm({
   windowValid: boolean
 }) {
   const { t } = useTranslation()
+  const idPrefix = useId()
   // Listed, not hidden: a strategy that vanished from the dropdown the moment
   // its file stopped compiling left whoever saved it nowhere to read why.
   const broken = strategies.filter((s) => s.errors.length > 0)
@@ -88,9 +90,9 @@ export function BacktestForm({
       <section className="form-section">
         <h3 className="form-section-title">{t('backtest.strategyAndParams')}</h3>
         <div className="field">
-          <label>{t('common.strategy')}</label>
+          <label htmlFor={`${idPrefix}-strategy`}>{t('common.strategy')}</label>
           <div className="field-row">
-            <select value={strategyKey} onChange={(e) => onStrategyChange(e.target.value)}>
+            <select id={`${idPrefix}-strategy`} value={strategyKey} onChange={(e) => onStrategyChange(e.target.value)}>
               {strategies.map((s) => (
                 <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
                   {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
@@ -186,8 +188,9 @@ export function BacktestForm({
         </div>
         <div className="form-grid">
           <div className="field">
-            <label>{t('common.start')}</label>
+            <label htmlFor={`${idPrefix}-start`}>{t('common.start')}</label>
             <input
+              id={`${idPrefix}-start`}
               type="date"
               value={start}
               className={windowValid ? undefined : 'invalid'}
@@ -195,8 +198,9 @@ export function BacktestForm({
             />
           </div>
           <div className="field">
-            <label>{t('common.end')}</label>
+            <label htmlFor={`${idPrefix}-end`}>{t('common.end')}</label>
             <input
+              id={`${idPrefix}-end`}
               type="date"
               value={end}
               className={windowValid ? undefined : 'invalid'}
@@ -210,23 +214,25 @@ export function BacktestForm({
         <h3 className="form-section-title">{t('backtest.cashAndCosts')}</h3>
         <div className="form-grid">
           <div className="field">
-            <label>{t('common.cash')}</label>
+            <label htmlFor={`${idPrefix}-cash`}>{t('common.cash')}</label>
             <input
+              id={`${idPrefix}-cash`}
               type="number"
               className={cashValid ? undefined : 'invalid'}
-              value={cash}
-              onChange={(e) => onCashChange(Number(e.target.value))}
+              value={typeof cash === 'number' && Number.isFinite(cash) ? cash : ''}
+              onChange={(e) => onCashChange(e.target.value === '' ? Number.NaN : Number(e.target.value))}
             />
           </div>
           <div className="field">
-            <label>{t('common.slippage')}</label>
+            <label htmlFor={`${idPrefix}-slippage`}>{t('common.slippage')}</label>
             <input
+              id={`${idPrefix}-slippage`}
               type="number"
               step="any"
               min="0"
               className={slippageValid ? undefined : 'invalid'}
-              value={slippage}
-              onChange={(e) => onSlippageChange(Number(e.target.value))}
+              value={typeof slippage === 'number' && Number.isFinite(slippage) ? slippage : ''}
+              onChange={(e) => onSlippageChange(e.target.value === '' ? Number.NaN : Number(e.target.value))}
             />
           </div>
         </div>

@@ -201,4 +201,19 @@ describe('AlertNotifyModal (centered floating dialog)', () => {
     expect(await screen.findByText('2026-11-19 15:30')).toBeInTheDocument()
     expect(screen.getByText('My Telegram: Sent (1 message)')).toBeInTheDocument()
   })
+
+  it('keeps time input mounted and focused when editing a scheduled reminder time', async () => {
+    renderWorkspace(<AlertNotifyModal open onClose={() => {}} />)
+    // Wait for server schedule to load and seed the draft before editing
+    await screen.findByText(/2026-11-20 15:30/)
+    const timeInput = screen.getByDisplayValue('15:30') as HTMLInputElement
+    timeInput.focus()
+    expect(document.activeElement).toBe(timeInput)
+
+    // Change value: because the row is keyed by index rather than value, the DOM node stays mounted & focused
+    const { fireEvent } = await import('@testing-library/react')
+    fireEvent.change(timeInput, { target: { value: '20:45' } })
+    expect(screen.getByDisplayValue('20:45')).toBe(timeInput)
+    expect(document.activeElement).toBe(timeInput)
+  })
 })

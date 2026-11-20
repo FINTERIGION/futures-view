@@ -37,8 +37,9 @@ def coverage_for(symbol: str) -> dict:
 
     if os.path.exists(weighted_path):
         try:
-            dates = pd.read_csv(weighted_path, usecols=['date'])['date']
-        except (ValueError, pd.errors.EmptyDataError):
+            raw_dates = pd.read_csv(weighted_path, usecols=['date'])['date']
+            dates = raw_dates.dropna().astype(str)
+        except (OSError, ValueError, TypeError, pd.errors.EmptyDataError, pd.errors.ParserError):
             dates = pd.Series([], dtype=str)
         if len(dates):
             info['has_data'] = True

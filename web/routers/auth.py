@@ -6,10 +6,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from web.auth import (
-    attach_cleared_cookie, attach_session_cookie, check_password, clear_password,
-    client_id, cookie_secure, issue_session, is_authenticated, login_allowed,
-    password_is_set, record_login_failure, reset_login_failures, revoke_session,
-    set_password, token_from_request,
+    attach_cleared_cookie, attach_session_cookie, authenticate_and_issue_session,
+    check_password, clear_password, client_id, cookie_secure, issue_session,
+    is_authenticated, login_allowed, password_is_set, record_login_failure,
+    reset_login_failures, revoke_session, set_password, token_from_request,
 )
 from web.schemas import LoginRequest, PasswordUpdateRequest
 
@@ -31,15 +31,15 @@ def login(body: LoginRequest, request: Request):
     if not login_allowed(identity):
         raise HTTPException(
             status_code=429,
-            detail='Too many attempts; wait a minute and try again.',
+            detail='Too many attempts; wait 5 minutes and try again.',
         )
     if not password_is_set():
         raise HTTPException(status_code=400, detail='No access password is set.')
-    if not check_password(body.password):
+    token = authenticate_and_issue_session(body.password)
+    if token is None:
         record_login_failure(identity)
         raise HTTPException(status_code=401, detail='Wrong password')
     reset_login_failures(identity)
-    token = issue_session()
     response = JSONResponse({'ok': True})
     attach_session_cookie(response, token, secure=cookie_secure(request))
     return response
@@ -59,14 +59,22 @@ def update_password(body: PasswordUpdateRequest, request: Request):
 
     First set is unauthenticated on purpose: the panel is already open to
     whoever can reach it. After that, the middleware requires a session and
-    this handler still checks ``current``, so a stolen cookie alone cannot
-    replace the password.
+    this handler still checks ``current`` (with rate limiting), so a stolen
+    cookie alone cannot brute-force or replace the password.
     """
+    identity = client_id(request)
     if password_is_set():
+        if not login_allowed(identity):
+            raise HTTPException(
+                status_code=429,
+                detail='Too many attempts; wait 5 minutes and try again.',
+            )
         if body.current is None:
             raise HTTPException(status_code=400, detail='Current password is required.')
         if not check_password(body.current):
+            record_login_failure(identity)
             raise HTTPException(status_code=403, detail='Current password is wrong.')
+        reset_login_failures(identity)
     elif body.password is None:
         return {'password_set': False}
 

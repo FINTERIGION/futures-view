@@ -14,6 +14,7 @@ log by thread id.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import dataclasses
 import itertools
@@ -205,24 +206,33 @@ class JobManager:
                 self._thread_job.pop(threading.get_ident(), None)
                 self._notify(job)
 
-        self._executor.submit(_run)
+        try:
+            self._executor.submit(_run)
+        except Exception:
+            with self._lock:
+                self._jobs.pop(job.id, None)
+            raise
         return job
 
     def get(self, job_id: str) -> Optional[Job]:
-        return self._jobs.get(job_id)
+        with self._lock:
+            return self._jobs.get(job_id)
 
     def list(self) -> List[Job]:
-        return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
+        with self._lock:
+            snapshot = list(self._jobs.values())
+        return sorted(snapshot, key=lambda j: j.created_at, reverse=True)
 
     def any_active(self) -> bool:
-        """True while any job is queued or running.
+        """True while any job is queued or running."""
+        with self._lock:
+            return any(j.status in ('queued', 'running') for j in self._jobs.values())
 
-        Used to refuse a product-registry write mid-run: the engine reads
-        ``product_costs``/``roll_rule`` live per fill
-        (``core/broker.py``, ``core/ledger.py``), so a multiplier or margin
-        edit landing mid-backtest would silently corrupt that run's numbers.
-        """
-        return any(j.status in ('queued', 'running') for j in self._jobs.values())
+    def shutdown(self, wait: bool = False) -> None:
+        """Detach log handlers and shut down the worker pool cleanly."""
+        for name in _MONITORED_LOGGERS:
+            logging.getLogger(name).removeHandler(self._handler)
+        self._executor.shutdown(wait=wait, cancel_futures=True)
 
     @contextlib.contextmanager
     def hold_starts(self):
@@ -275,13 +285,15 @@ class JobManager:
         try:
             import json as _json
             while True:
+                # Snapshot terminal status *after* grabbing logs? Grab status
+                # first, then drain logs once more if terminal so no log line
+                # emitted immediately prior to the terminal state transition
+                # (such as ``logger.exception`` before ``status='error'``) is
+                # ever lost.
+                terminal = job.status in ('done', 'error', 'cancelled')
                 with job._lock:
                     pending_logs = [line for line in job.logs if line.seq > last_seq]
                 if pending_logs:
-                    # A gap means the buffer overwrote lines before this
-                    # stream drained them. Say so: an unannounced hole reads
-                    # as a job that simply went quiet, which is the failure
-                    # this whole change is about.
                     dropped = pending_logs[0].seq - last_seq - 1
                     if dropped > 0:
                         payload = _json.dumps({
@@ -295,13 +307,32 @@ class JobManager:
                     payload = _json.dumps({'type': 'log', 'level': line.level, 'message': line.message})
                     yield f'data: {payload}\n\n'
 
-                payload = _json.dumps({'type': 'state', **job.to_dict()})
+                state_dict = job.to_dict()
+                is_terminal = terminal or state_dict['status'] in ('done', 'error', 'cancelled')
+                if is_terminal:
+                    with job._lock:
+                        tail_logs = [line for line in job.logs if line.seq > last_seq]
+                    if tail_logs:
+                        last_seq = tail_logs[-1].seq
+                        for line in tail_logs:
+                            payload = _json.dumps({'type': 'log', 'level': line.level, 'message': line.message})
+                            yield f'data: {payload}\n\n'
+                    payload = _json.dumps({'type': 'state', **job.to_dict()})
+                    yield f'data: {payload}\n\n'
+                    return
+
+                payload = _json.dumps({'type': 'state', **state_dict})
                 yield f'data: {payload}\n\n'
 
-                if job.status in ('done', 'error', 'cancelled'):
-                    return
                 try:
                     await asyncio.wait_for(queue.get(), timeout=15.0)
+                    # Coalesce bursts of notifications into one loop pass so we
+                    # don't emit N duplicate state frames after draining N logs.
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                 except asyncio.TimeoutError:
                     continue
         finally:
@@ -311,3 +342,4 @@ class JobManager:
 
 
 manager = JobManager()
+atexit.register(manager.shutdown)

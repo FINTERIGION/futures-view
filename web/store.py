@@ -18,10 +18,12 @@ were infinite. Everything that does reach the browser goes through
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -112,16 +114,65 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_deliveries_slot
 # while already holding this one.
 _lock = threading.Lock()
 _conn_lock = threading.Lock()
+_adopt_orphans_on_connect = True
+
+
+def set_adopt_orphans_on_connect(enabled: bool) -> None:
+    """Toggle orphan-row adoption when opening the SQLite connection.
+
+    One-shot CLI commands (``python main.py alert``) may run alongside a live
+    web server sharing ``results/webpanel.db``; disabling adoption prevents
+    them from marking the web server's active in-flight jobs as interrupted.
+    """
+    global _adopt_orphans_on_connect
+    _adopt_orphans_on_connect = bool(enabled)
 
 
 def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    existed = os.path.exists(DB_PATH)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    if not existed and os.name == 'posix':
+        try:
+            os.chmod(DB_PATH, 0o600)
+        except OSError:
+            pass
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     conn.executescript(_SCHEMA)
-    _adopt_orphaned_runs(conn)
+    if _adopt_orphans_on_connect:
+        _adopt_orphaned_runs(conn)
     return conn
+
+
+def adopt_orphaned_runs() -> None:
+    """Explicitly mark any leftover ``running`` rows as ``interrupted``."""
+    with _lock:
+        _adopt_orphaned_runs(_get_conn())
+
+
+def close() -> None:
+    """Close the shared SQLite connection cleanly (used on server shutdown)."""
+    global _conn
+    with _lock, _conn_lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            finally:
+                _conn = None
+
+
+@contextlib.contextmanager
+def _write_tx():
+    """Acquire ``_lock``, yield the connection, commit on success, rollback on error."""
+    with _lock:
+        conn = _get_conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def _adopt_orphaned_runs(conn: sqlite3.Connection) -> None:
@@ -251,8 +302,7 @@ def create_run(
     params: dict = None,
 ) -> str:
     run_id = uuid.uuid4().hex[:12]
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute(
             'INSERT INTO runs (id, kind, created_at, strategy, symbols, start, end, '
             'cash, slippage, params_json, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
@@ -263,7 +313,6 @@ def create_run(
         )
         # On insert, so the history is bounded at the one point it can grow.
         _prune_locked(conn)
-        conn.commit()
     return run_id
 
 
@@ -272,29 +321,32 @@ def finish_run(
     artifact: dict = None, error: str = None,
 ) -> None:
     """``artifact`` (equity records, trade logs, per-symbol price+signal
-    data -- whatever the run type produces) is written to
+    data -- whatever the run type produces) is written atomically to
     ``results/web/{run_id}.json`` rather than into the row itself.
-
-    Run through ``jsonable`` first: the engine's records carry
-    ``datetime.date`` (every ``equity_records``/``trade_logs`` row) and numpy
-    scalars, neither of which the stdlib ``json`` module can serialize on its
-    own. Metrics are the one exception -- see the module docstring on why
-    ``metrics_json`` below is *not* run through this.
     """
     artifact_name = None
     if artifact is not None:
         os.makedirs(WEB_RESULTS_DIR, exist_ok=True)
         artifact_name = f'{run_id}.json'
-        with open(_artifact_file(artifact_name), 'w', encoding='utf-8') as f:
-            json.dump(jsonable(artifact), f)
+        target = _artifact_file(artifact_name)
+        fd, tmp_path = tempfile.mkstemp(dir=WEB_RESULTS_DIR, prefix=f'.{run_id}.', suffix='.json.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(jsonable(artifact), f)
+            os.replace(tmp_path, target)
+        except Exception:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            raise
 
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute(
             'UPDATE runs SET status=?, metrics_json=?, artifact_path=?, error=? WHERE id=?',
             (status, json.dumps(metrics) if metrics is not None else None, artifact_name, error, run_id),
         )
-        conn.commit()
 
 
 def get_run(run_id: str) -> Optional[dict]:
@@ -311,10 +363,16 @@ def get_artifact(run_id: str) -> Optional[dict]:
     if row is None or not row.get('artifact_path'):
         return None
     path = _artifact_file(row['artifact_path'])
-    if not os.path.exists(path):
+    if not path:
         return None
-    with open(path, encoding='utf-8') as f:
-        return json.load(f)
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning('Artifact %s for run %s could not be read: %s', path, run_id, exc)
+        return None
 
 
 def list_runs(*, kind: str = None, limit: int = 100) -> List[dict]:
@@ -334,18 +392,8 @@ class RunInFlight(Exception):
 
 
 def delete_run(run_id: str) -> bool:
-    """Delete a finished run and its artifact; ``False`` if there is no such run.
-
-    A run still ``running`` raises ``RunInFlight`` instead. Its job is going to
-    call ``finish_run``, which writes ``results/web/{id}.json`` *before* it
-    updates the row -- so deleting the row mid-run left that file behind with
-    nothing pointing at it, out of reach of ``_prune_locked`` and of any delete
-    button, megabytes at a time. The status check and the delete run under
-    ``_lock``, the same lock ``finish_run``'s update takes, so a run cannot
-    finish in between. Artifact first, for the reason ``_prune_locked`` gives.
-    """
-    with _lock:
-        conn = _get_conn()
+    """Delete a finished run and its artifact; ``False`` if there is no such run."""
+    with _write_tx() as conn:
         row = conn.execute('SELECT status, artifact_path FROM runs WHERE id=?', (run_id,)).fetchone()
         if row is None:
             return False
@@ -355,10 +403,12 @@ def delete_run(run_id: str) -> bool:
                 f'before deleting it.'
             )
         path = _artifact_file(row['artifact_path'])
-        if path and os.path.exists(path):
-            os.remove(path)
+        if path:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
         conn.execute('DELETE FROM runs WHERE id=?', (run_id,))
-        conn.commit()
     return True
 
 
@@ -380,8 +430,7 @@ def get_setting(key: str) -> Optional[str]:
 
 def set_setting(key: str, value: Optional[str]) -> None:
     """Write ``value``, or delete the key when ``value`` is ``None``."""
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         if value is None:
             conn.execute('DELETE FROM settings WHERE key=?', (key,))
         else:
@@ -390,25 +439,45 @@ def set_setting(key: str, value: Optional[str]) -> None:
                 'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                 (key, value),
             )
-        conn.commit()
+
+
+def set_setting_and_clear_sessions(key: str, value: Optional[str]) -> None:
+    """Atomically update a setting (e.g. password hash) and drop all sessions."""
+    with _write_tx() as conn:
+        if value is None:
+            conn.execute('DELETE FROM settings WHERE key=?', (key,))
+        else:
+            conn.execute(
+                'INSERT INTO settings (key, value) VALUES (?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                (key, value),
+            )
+        conn.execute('DELETE FROM sessions')
+
+
+def check_auth_state(password_key: str, token_hash: Optional[str]) -> tuple:
+    """Return ``(password_set, session_expires_at)`` in a single lock acquisition."""
+    with _lock:
+        conn = _get_conn()
+        pw = conn.execute('SELECT value FROM settings WHERE key=?', (password_key,)).fetchone()
+        if pw is None or not pw['value']:
+            return False, None
+        if not token_hash:
+            return True, None
+        sess = conn.execute(
+            'SELECT expires_at FROM sessions WHERE token_hash=?', (token_hash,),
+        ).fetchone()
+        return True, (None if sess is None else float(sess['expires_at']))
 
 
 def put_session(token_hash: str, created_at: float, expires_at: float) -> None:
-    """Record a login session and drop any that have already expired.
-
-    The prune rides along on the write that makes a new row, which is the
-    only moment the table can grow. Expired rows are otherwise harmless --
-    ``session_expires_at`` treats them as missing -- but they would sit
-    forever after a password that is set once and then used for years.
-    """
-    with _lock:
-        conn = _get_conn()
+    """Record a login session and drop any that have already expired."""
+    with _write_tx() as conn:
         conn.execute('DELETE FROM sessions WHERE expires_at < ?', (created_at,))
         conn.execute(
             'INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)',
             (token_hash, created_at, expires_at),
         )
-        conn.commit()
 
 
 def session_expires_at(token_hash: str) -> Optional[float]:
@@ -422,17 +491,13 @@ def session_expires_at(token_hash: str) -> Optional[float]:
 
 
 def delete_session(token_hash: str) -> None:
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute('DELETE FROM sessions WHERE token_hash=?', (token_hash,))
-        conn.commit()
 
 
 def delete_all_sessions() -> None:
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute('DELETE FROM sessions')
-        conn.commit()
 
 
 # ---------------------------------------------------------------------
@@ -490,8 +555,7 @@ def create_alert_monitor(
     now = time.time()
     mid = (monitor_id or '').strip() or uuid.uuid4().hex[:12]
     ts_created = float(created_at) if created_at is not None else now
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute(
             'INSERT INTO alert_monitors '
             '(id, name, strategy, symbols_json, params_json, notify_enabled, created_at, updated_at) '
@@ -507,7 +571,6 @@ def create_alert_monitor(
                 now,
             ),
         )
-        conn.commit()
         row = conn.execute('SELECT * FROM alert_monitors WHERE id=?', (mid,)).fetchone()
     return _monitor_to_dict(row)
 
@@ -523,8 +586,7 @@ def update_alert_monitor(
     clear_snapshot: bool = False,
 ) -> Optional[dict]:
     now = time.time()
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         existing = conn.execute(
             'SELECT id FROM alert_monitors WHERE id=?', (monitor_id,),
         ).fetchone()
@@ -559,7 +621,6 @@ def update_alert_monitor(
                     monitor_id,
                 ),
             )
-        conn.commit()
         row = conn.execute('SELECT * FROM alert_monitors WHERE id=?', (monitor_id,)).fetchone()
     return _monitor_to_dict(row)
 
@@ -572,8 +633,7 @@ def record_alert_monitor_result(
     checked_at: Optional[float] = None,
 ) -> None:
     ts = float(checked_at) if checked_at is not None else time.time()
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         if snapshot is not None:
             conn.execute(
                 'UPDATE alert_monitors SET last_snapshot_json=?, last_checked_at=?, last_error=NULL '
@@ -585,14 +645,11 @@ def record_alert_monitor_result(
                 'UPDATE alert_monitors SET last_checked_at=?, last_error=? WHERE id=?',
                 (ts, error, monitor_id),
             )
-        conn.commit()
 
 
 def delete_alert_monitor(monitor_id: str) -> bool:
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         cur = conn.execute('DELETE FROM alert_monitors WHERE id=?', (monitor_id,))
-        conn.commit()
         return cur.rowcount > 0
 
 
@@ -635,8 +692,7 @@ def create_notify_channel(
 ) -> dict:
     cid = uuid.uuid4().hex[:12]
     now = time.time()
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         conn.execute(
             'INSERT INTO notify_channels '
             '(id, kind, name, enabled, config_json, created_at, updated_at) '
@@ -651,7 +707,6 @@ def create_notify_channel(
                 now,
             ),
         )
-        conn.commit()
         row = conn.execute('SELECT * FROM notify_channels WHERE id=?', (cid,)).fetchone()
     return _channel_to_dict(row)
 
@@ -660,8 +715,7 @@ def update_notify_channel(
     channel_id: str, *, kind: str, name: str, config: dict, enabled: bool,
 ) -> Optional[dict]:
     now = time.time()
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         existing = conn.execute(
             'SELECT id FROM notify_channels WHERE id=?', (channel_id,),
         ).fetchone()
@@ -679,16 +733,13 @@ def update_notify_channel(
                 channel_id,
             ),
         )
-        conn.commit()
         row = conn.execute('SELECT * FROM notify_channels WHERE id=?', (channel_id,)).fetchone()
     return _channel_to_dict(row)
 
 
 def delete_notify_channel(channel_id: str) -> bool:
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         cur = conn.execute('DELETE FROM notify_channels WHERE id=?', (channel_id,))
-        conn.commit()
         return cur.rowcount > 0
 
 
@@ -754,8 +805,7 @@ def finish_alert_delivery(
     error: Optional[str] = None,
 ) -> None:
     now = time.time()
-    with _lock:
-        conn = _get_conn()
+    with _write_tx() as conn:
         if monitor_count is None:
             conn.execute(
                 'UPDATE alert_deliveries SET finished_at=?, status=?, symbols_updated_json=?, '
@@ -788,7 +838,6 @@ def finish_alert_delivery(
                     delivery_id,
                 ),
             )
-        conn.commit()
 
 
 def list_alert_deliveries(limit: int = 30) -> List[dict]:

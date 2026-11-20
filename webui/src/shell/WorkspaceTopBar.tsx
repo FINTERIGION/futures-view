@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { alertsApi } from '../api/endpoints'
 import { Icon } from '../components/Icon'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { useJobs, type JobSlot } from './JobsProvider'
-import { useWorkspace } from './WorkspaceContext'
+import { useJobs, type JobSlot } from './jobsStore'
+import { useWorkspace } from './workspaceStore'
 
 const LANGS: { code: string; label: string }[] = [
   { code: 'en', label: 'EN' },
@@ -38,8 +38,8 @@ export function WorkspaceTopBar({
   })
 
   const activePills = (['backtest', 'data', 'alert', 'dispatch'] as const)
-    .map((slot) => ({ slot, state: jobs[slot].state }))
-    .filter((j) => j.state && ['queued', 'running'].includes(j.state.status))
+    .map((slot) => ({ slot, state: jobs[slot].state, lost: jobs[slot].lost }))
+    .filter((j) => !j.lost && j.state && ['queued', 'running'].includes(j.state.status))
 
   const openJob = (slot: JobSlot) => {
     if (slot === 'data') {

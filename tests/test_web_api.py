@@ -2042,3 +2042,48 @@ def test_an_all_nan_output_reports_no_warmup_at_all(client, synthetic_bars, tmp_
     series = resp.json()['outputs']['x']
     assert series['valid_from'] is None
     assert set(series['values']) == {None}
+
+
+def test_bars_and_market_cache_invalidate_blocks_stale_concurrent_load(monkeypatch):
+    """If invalidate() runs while a slow load is computing bars/market data,
+    the stale result must NOT be stored back into the cache."""
+    import web.barscache as barscache_mod
+    import web.marketcache as marketcache_mod
+
+    bc = barscache_mod.BarsCache(maxsize=4)
+    calls = 0
+
+    class _FakeDM:
+        def __init__(self, symbols):
+            self.symbols = symbols
+
+        def load_dataframe(self, start_date=None, end_date=None, symbol=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                bc.invalidate()
+                return {'version': 1}
+            return {'version': 2}
+
+    monkeypatch.setattr(barscache_mod, 'DataManager', _FakeDM)
+    assert bc.get('SA', None, None) == {'version': 1}
+    # Stale result must not have been cached; second call loads fresh data.
+    assert bc.get('SA', None, None) == {'version': 2}
+    assert calls == 2
+
+    mc = marketcache_mod.MarketCache(maxsize=4)
+    m_calls = 0
+
+    def fake_load_market(symbols, start, end, update=False):
+        nonlocal m_calls
+        m_calls += 1
+        if m_calls == 1:
+            mc.invalidate()
+            return {'version': 1}
+        return {'version': 2}
+
+    monkeypatch.setattr(marketcache_mod, 'load_market', fake_load_market)
+    assert mc.get(['SA'], None, None) == {'version': 1}
+    assert mc.get(['SA'], None, None) == {'version': 2}
+    assert m_calls == 2
+

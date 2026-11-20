@@ -50,15 +50,17 @@ it says.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
+import threading
 from typing import Dict, Iterable, List, Optional, Tuple
 
 _CONTRACT_RE = re.compile(r'^([A-Za-z]+)(\d+)$')
 _CONTRACT_DECADE_RE = re.compile(r'^([A-Za-z]+)(\d+)_(\d{6})$')
-_WEIGHTED_SUFFIX = '_weighted'
-_CODE_RE = re.compile(r'^[A-Z0-9]+$')
+_CODE_RE = re.compile(r'^[A-Z]+$')
+_REGISTRY_LOCK = threading.RLock()
 
 DEFAULT_MAIN_MONTHS = (1, 5, 9)
 DEFAULT_ROLL_LEAD_MONTHS = 1
@@ -97,7 +99,7 @@ def validate_product(code: str, meta: dict) -> dict:
     """
     norm_code = normalize_symbol(code)
     if not norm_code or not _CODE_RE.match(norm_code):
-        raise ValueError(f'Invalid product code {code!r}: use letters/digits only')
+        raise ValueError(f'Invalid product code {code!r}: use letters only')
 
     out = dict(meta)
 
@@ -117,16 +119,31 @@ def validate_product(code: str, meta: dict) -> dict:
         raise ValueError('name_zh must be a non-empty string')
 
     multiplier = out.get('multiplier')
-    if not isinstance(multiplier, (int, float)) or isinstance(multiplier, bool) or multiplier <= 0:
-        raise ValueError(f'multiplier must be > 0, got {multiplier!r}')
+    if (
+        not isinstance(multiplier, (int, float))
+        or isinstance(multiplier, bool)
+        or not math.isfinite(multiplier)
+        or multiplier <= 0
+    ):
+        raise ValueError(f'multiplier must be a finite number > 0, got {multiplier!r}')
 
     tick = out.get('tick_size')
-    if not isinstance(tick, (int, float)) or isinstance(tick, bool) or not (0 < tick <= 100):
-        raise ValueError(f'tick_size must be in (0, 100], got {tick!r}')
+    if (
+        not isinstance(tick, (int, float))
+        or isinstance(tick, bool)
+        or not math.isfinite(tick)
+        or not (0 < tick <= 100)
+    ):
+        raise ValueError(f'tick_size must be a finite number in (0, 100], got {tick!r}')
 
     margin_rate = out.get('margin_rate', 0.10)
-    if not isinstance(margin_rate, (int, float)) or isinstance(margin_rate, bool) or not (0 < margin_rate < 1):
-        raise ValueError(f'margin_rate must be in (0, 1), got {margin_rate!r}')
+    if (
+        not isinstance(margin_rate, (int, float))
+        or isinstance(margin_rate, bool)
+        or not math.isfinite(margin_rate)
+        or not (0 < margin_rate < 1)
+    ):
+        raise ValueError(f'margin_rate must be a finite number in (0, 1), got {margin_rate!r}')
     out['margin_rate'] = float(margin_rate)
 
     has_rate = out.get('commission_rate') is not None
@@ -138,10 +155,28 @@ def validate_product(code: str, meta: dict) -> dict:
             f'commission_per_lot={out.get("commission_per_lot")!r})'
         )
     if has_rate:
-        out['commission_rate'] = float(out['commission_rate'])
+        raw_rate = out['commission_rate']
+        if (
+            not isinstance(raw_rate, (int, float))
+            or isinstance(raw_rate, bool)
+            or not math.isfinite(raw_rate)
+            or raw_rate < 0
+        ):
+            raise ValueError(f'commission_rate must be a finite number >= 0, got {raw_rate!r}')
+        out['commission_rate'] = float(raw_rate)
         out.pop('commission_per_lot', None)
     else:
-        out['commission_per_lot'] = float(out['commission_per_lot'])
+        raw_per_lot = out['commission_per_lot']
+        if (
+            not isinstance(raw_per_lot, (int, float))
+            or isinstance(raw_per_lot, bool)
+            or not math.isfinite(raw_per_lot)
+            or raw_per_lot < 0
+        ):
+            raise ValueError(
+                f'commission_per_lot must be a finite number >= 0, got {raw_per_lot!r}'
+            )
+        out['commission_per_lot'] = float(raw_per_lot)
         out.pop('commission_rate', None)
 
     if 'main_months' in out:
@@ -209,13 +244,15 @@ def save_registry(registry: Dict[str, dict], path: str = None) -> None:
 def reload_registry(path: str = None) -> None:
     """Re-read the registry file and update ``PRODUCTS`` in place."""
     fresh = _load_registry(path or REGISTRY_PATH)
-    PRODUCTS.clear()
-    PRODUCTS.update(fresh)
+    with _REGISTRY_LOCK:
+        PRODUCTS.clear()
+        PRODUCTS.update(fresh)
 
 
 def list_products() -> List[str]:
     """Return registered product codes in definition order."""
-    return list(PRODUCTS)
+    with _REGISTRY_LOCK:
+        return list(PRODUCTS)
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -224,10 +261,11 @@ def normalize_symbol(symbol: str) -> str:
 
 def get_product(symbol: str) -> dict:
     key = normalize_symbol(symbol)
-    if key not in PRODUCTS:
-        supported = ', '.join(list_products())
-        raise KeyError(f'Unknown symbol {symbol!r}; supported: {supported}')
-    return PRODUCTS[key]
+    with _REGISTRY_LOCK:
+        if key not in PRODUCTS:
+            supported = ', '.join(PRODUCTS)
+            raise KeyError(f'Unknown symbol {symbol!r}; supported: {supported}')
+        return PRODUCTS[key]
 
 
 def product_costs(symbol: str) -> dict:
@@ -301,10 +339,6 @@ def require_products(symbols: Iterable[str]) -> List[str]:
     return out
 
 
-def weighted_feed_name(symbol: str) -> str:
-    return f'{normalize_symbol(symbol)}_weighted'
-
-
 def parse_product(code) -> Optional[str]:
     """Extract a **registered** product code from a feed name or contract code.
 
@@ -325,17 +359,18 @@ def parse_product(code) -> Optional[str]:
     if not text:
         return None
     upper = text.upper()
-    if upper in PRODUCTS:
-        return upper
-    if upper.endswith('_WEIGHTED'):
-        prefix = upper[: -len('_WEIGHTED')]
-        return prefix if prefix in PRODUCTS else None
-    decade = _CONTRACT_DECADE_RE.match(text)
-    if decade:
-        prefix = decade.group(1).upper()
-        return prefix if prefix in PRODUCTS else None
-    match = _CONTRACT_RE.match(text)
-    if match:
-        prefix = match.group(1).upper()
-        return prefix if prefix in PRODUCTS else None
-    return None
+    with _REGISTRY_LOCK:
+        if upper in PRODUCTS:
+            return upper
+        if upper.endswith('_WEIGHTED'):
+            prefix = upper[: -len('_WEIGHTED')]
+            return prefix if prefix in PRODUCTS else None
+        decade = _CONTRACT_DECADE_RE.match(text)
+        if decade:
+            prefix = decade.group(1).upper()
+            return prefix if prefix in PRODUCTS else None
+        match = _CONTRACT_RE.match(text)
+        if match:
+            prefix = match.group(1).upper()
+            return prefix if prefix in PRODUCTS else None
+        return None

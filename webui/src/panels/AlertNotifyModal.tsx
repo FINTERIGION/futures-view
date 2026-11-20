@@ -15,8 +15,9 @@ import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
 import { Modal } from '../components/Modal'
 import { Tabs, type TabItem } from '../components/Tabs'
-import { useToast } from '../components/Toast'
-import { useJobSlot } from '../shell/JobsProvider'
+import { useToast } from '../components/toastStore'
+import { useJobSlot } from '../shell/jobsStore'
+import { invalidateAlertPreviewCache } from './alertPreviewStore'
 
 type NotifyTab = 'schedule' | 'channels' | 'history'
 
@@ -226,10 +227,14 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
     if (state.status === 'done' && !('result' in state)) return
     lastHandledDispatchRef.current = key
 
+    invalidateAlertPreviewCache()
     void queryClient.invalidateQueries({ queryKey: ['alert-monitors'] })
     void queryClient.invalidateQueries({ queryKey: ['alert-deliveries'] })
     void queryClient.invalidateQueries({ queryKey: ['alert-schedule'] })
     void queryClient.invalidateQueries({ queryKey: ['products'] })
+    void queryClient.invalidateQueries({ queryKey: ['product-bars'] })
+    void queryClient.invalidateQueries({ queryKey: ['product-roll'] })
+    void queryClient.invalidateQueries({ queryKey: ['indicator'] })
 
     if (state.status === 'done') {
       const outcome = state.result as { status?: string; summary?: string } | undefined
@@ -333,9 +338,10 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
 
   const deleteChannelMutation = useMutation({
     mutationFn: (id: string) => alertsApi.deleteChannel(id),
-    onSuccess: async () => {
+    onSuccess: async (_res, deletedId) => {
       await queryClient.invalidateQueries({ queryKey: ['alert-channels'] })
       setConfirmDelete(null)
+      setChannelDraft((prev) => (prev?.editingId === deletedId ? null : prev))
       toast.push({ kind: 'success', title: t('alerts.notify.channelDeleted') })
     },
     onError: (err: unknown) => {
@@ -344,6 +350,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
   })
 
   async function handleTestChannel(ch: NotifyChannel) {
+    if (testingChannelId !== null) return
     setTestingChannelId(ch.id)
     try {
       const res = await alertsApi.testChannel(ch.id)
@@ -357,7 +364,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
     } catch (err) {
       toast.push({ kind: 'error', title: errorMessage(err) })
     } finally {
-      setTestingChannelId(null)
+      setTestingChannelId((curr) => (curr === ch.id ? null : curr))
     }
   }
 
@@ -483,7 +490,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                 </div>
                 <div className="notify-time-list">
                   {scheduleDraft.times.map((tm, idx) => (
-                    <div className="notify-time-chip" key={`${idx}-${tm}`}>
+                    <div className="notify-time-chip" key={idx}>
                       <input
                         type="time"
                         aria-label={`${t('alerts.notify.times')} ${idx + 1}`}
@@ -886,7 +893,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                                 : t('alerts.notify.kindWebhook')}
                             </span>
                             <span className={`badge ${ch.enabled ? 'badge-success' : 'badge-neutral'}`}>
-                              {ch.enabled ? t('alerts.notify.channelEnabled') : t('common.none')}
+                              {ch.enabled ? t('alerts.notify.channelEnabled') : t('alerts.notify.channelDisabled')}
                             </span>
                           </div>
                           <span className="notify-item-meta" title={summary}>
@@ -897,7 +904,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                           <button
                             type="button"
                             className="btn btn-sm"
-                            disabled={testingChannelId === ch.id}
+                            disabled={testingChannelId !== null}
                             onClick={() => void handleTestChannel(ch)}
                           >
                             <Icon name="send" size={13} />
@@ -906,8 +913,8 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                           <button
                             type="button"
                             className="btn btn-sm btn-ghost btn-icon"
-                            title={ch.enabled ? t('alerts.notify.channelEnabled') : t('common.none')}
-                            aria-label={ch.enabled ? t('alerts.notify.channelEnabled') : t('common.none')}
+                            title={ch.enabled ? t('alerts.notify.channelEnabled') : t('alerts.notify.channelDisabled')}
+                            aria-label={ch.enabled ? t('alerts.notify.channelEnabled') : t('alerts.notify.channelDisabled')}
                             onClick={() => toggleChannelMutation.mutate(ch)}
                           >
                             <Icon name={ch.enabled ? 'bell' : 'bell-off'} size={14} />

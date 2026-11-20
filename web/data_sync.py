@@ -1,11 +1,14 @@
 """Symbol-level download coordinator shared between manual data updates
 (``web.routers.data``) and scheduled alert dispatches (``web.alert_service``).
 
-Manual ``POST /api/data/update`` requests fail fast with 409 when a product is
-already downloading. Scheduled alert dispatches wait cooperatively for an
-in-flight download of the same product to finish before taking their turn, so
-two writers never interleave ``{sym}.csv`` / ``{sym}_weighted.csv`` /
-``{sym}.meta.json``.
+Separates two concerns to prevent thread-pool deadlocks:
+- ``_inflight`` (in ``web.routers.data``) tracks symbols belonging to a queued
+  or running manual ``POST /api/data/update`` so a duplicate manual click fails
+  fast with HTTP 409.
+- ``_writing`` (here) tracks symbols currently executing ``DataUpdate.update``
+  inside a worker thread, acquired per symbol only while actually writing disk
+  files. That ensures a queued manual job waiting for a pool slot can never
+  deadlock a running ``alert_dispatch`` worker.
 """
 
 from __future__ import annotations
@@ -15,7 +18,8 @@ import threading
 import time
 from typing import Optional
 
-from web.routers import data as _data_router
+_writing: set = set()
+_writing_cond = threading.Condition()
 
 
 @contextlib.contextmanager
@@ -25,11 +29,10 @@ def acquire_symbol(
     cancel_event: Optional[threading.Event] = None,
     timeout: float = 300.0,
 ):
-    """Wait until ``symbol`` is not being updated elsewhere, then claim it."""
+    """Wait until no worker is currently writing ``symbol``'s files, then claim it."""
     deadline = time.monotonic() + max(0.0, timeout)
-    cond = _data_router._inflight_lock
-    with cond:
-        while symbol in _data_router._inflight:
+    with _writing_cond:
+        while symbol in _writing:
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError(f'Cancelled while waiting for {symbol} update')
             remaining = deadline - time.monotonic()
@@ -37,12 +40,12 @@ def acquire_symbol(
                 raise TimeoutError(
                     f'Timed out waiting for another {symbol} data update to finish',
                 )
-            cond.wait(timeout=min(0.5, remaining))
-        _data_router._inflight.add(symbol)
+            _writing_cond.wait(timeout=min(0.5, remaining))
+        _writing.add(symbol)
 
     try:
         yield
     finally:
-        with cond:
-            _data_router._inflight.discard(symbol)
-            cond.notify_all()
+        with _writing_cond:
+            _writing.discard(symbol)
+            _writing_cond.notify_all()

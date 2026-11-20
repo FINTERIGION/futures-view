@@ -62,17 +62,19 @@ export const SHORTCUTS: { combo: string; key: string }[] = [
  * to whoever is typing. A modified combo still does: Ctrl/⌘+B is not
  * something any text input wants.
  */
+function hasModalOpen(): boolean {
+  return document.querySelector('[role="dialog"][aria-modal="true"]') !== null
+}
+
 export function useHotkeys(bindings: Record<string, (e: KeyboardEvent) => void>) {
   const ref = useRef(bindings)
-  // Refreshed after each render rather than during it: the handlers only ever
-  // run from a window event, which is always after the commit that put the
-  // newest ones here.
   useEffect(() => {
     ref.current = bindings
   })
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (hasModalOpen()) return
       const editing = isEditable(e.target)
       for (const [combo, handler] of Object.entries(ref.current)) {
         if (editing && !combo.includes('mod')) continue

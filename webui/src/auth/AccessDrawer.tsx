@@ -6,7 +6,8 @@ import { errorMessage } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
 import { Modal } from '../components/Modal'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastStore'
+import { invalidateAlertPreviewCache } from '../panels/alertPreviewStore'
 import './auth.css'
 
 const MIN = 8
@@ -59,6 +60,8 @@ export function AccessDrawer({ open, onClose }: { open: boolean; onClose: () => 
   const logout = useMutation({
     mutationFn: authApi.logout,
     onSuccess: async () => {
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'auth' })
+      invalidateAlertPreviewCache()
       await queryClient.invalidateQueries({ queryKey: AUTH_STATUS_KEY })
     },
     onError: (err: unknown) => {
@@ -74,6 +77,10 @@ export function AccessDrawer({ open, onClose }: { open: boolean; onClose: () => 
 
   function handleSave(e: FormEvent) {
     e.preventDefault()
+    if (passwordSet && !current) {
+      setFormError(t('auth.currentRequired'))
+      return
+    }
     const local = localError()
     if (local) {
       setFormError(local)

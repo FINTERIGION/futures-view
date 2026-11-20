@@ -20,7 +20,7 @@ python main.py backtest --symbols CF FG --start 2020-01-01 --end 2026-12-31 --st
 | `--update-data` | `flag` | `False` | Run data sync before backtest |
 | `--results-dir` | `path` | `results/` | Output directory |
 | `--keep-last` | `int` | `None` | Retain only the `N` most recent run outputs |
-| `--quiet` / `--verbose` | `flag` | `INFO` | Set log level to `WARNING` / `DEBUG` |
+| `--quiet` / `--verbose` | global flag | `INFO` | Set log level to `WARNING` / `DEBUG` (pass before the subcommand, e.g., `python main.py --quiet backtest ...`) |
 
 ## Execution Model
 
@@ -39,7 +39,7 @@ Signals compute on `{SYMBOL}_weighted.csv`; orders fill on `{SYMBOL}.csv` agains
 - **Single-leg invariant**: Each product holds at most one contract at a time. Rolling closes the old contract and opens the new contract at their respective open prices.
 - **Dark old contract (still active)**: Roll defers until the old contract prints a session; queued orders remain targeted at the old leg and defer with it.
 - **Dark old contract (expired/delisted)**: Position closes at its last carried settlement mark, opens on the new contract at open, and increments `stranded_rolls`.
-- **Bracket re-anchoring**: `distance` specs re-resolve from the new leg's `avg_entry`; `price` specs shift by the realized roll basis.
+- **Bracket re-anchoring**: Both `distance` and `price` specs shift by the realized roll basis (`new_open - old_ref`), preserving original entry-relative stop/TP distances across contract rolls.
 
 ### Margin & Capital Guards
 - **Pre-fill margin check**: At `OPEN`, orders that increase margin requirements beyond current equity are rejected (`n_rejected_orders` increments; orders are not replayed). Risk-reducing orders (closes, partial reductions, flips to lower-margin exposure), rolls, and forced liquidations bypass this check.

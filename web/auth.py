@@ -53,6 +53,8 @@ LOGIN_MAX_FAILURES = 8
 
 _fail_lock = threading.Lock()
 _failures: dict[str, list[float]] = {}
+_auth_lock = threading.Lock()
+_MAX_TRACKED_IDENTITIES = 512
 
 
 # ---------------------------------------------------------------------
@@ -100,21 +102,30 @@ def check_password(password: str) -> bool:
 
 
 def set_password(password: str) -> None:
-    """Hash and store ``password``, dropping every existing session.
-
-    A change has to invalidate the other browsers: otherwise a stolen
-    cookie would outlive the password it was issued under. The caller
-    issues a fresh session for the browser that just set it.
-    """
+    """Hash and store ``password``, dropping every existing session atomically."""
     stored = hash_password(password)
-    store.set_setting(PASSWORD_KEY, stored)
-    store.delete_all_sessions()
+    with _auth_lock:
+        store.set_setting_and_clear_sessions(PASSWORD_KEY, stored)
 
 
 def clear_password() -> None:
-    store.set_setting(PASSWORD_KEY, None)
-    store.delete_all_sessions()
+    with _auth_lock:
+        store.set_setting_and_clear_sessions(PASSWORD_KEY, None)
     logger.info('Web access password cleared; every login session has been dropped.')
+
+
+def authenticate_and_issue_session(password: str) -> Optional[str]:
+    """Verify ``password`` and mint a session without racing a password rotation."""
+    stored = store.get_setting(PASSWORD_KEY)
+    if not stored:
+        return None
+    if not _verify_stored(password, stored):
+        return None
+    with _auth_lock:
+        # Ensure the password hash did not change while scrypt was running.
+        if store.get_setting(PASSWORD_KEY) != stored:
+            return None
+        return issue_session()
 
 
 # ---------------------------------------------------------------------
@@ -122,7 +133,7 @@ def clear_password() -> None:
 # ---------------------------------------------------------------------
 
 def _token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode('ascii')).hexdigest()
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
 def issue_session() -> str:
@@ -148,15 +159,12 @@ def revoke_session(token: Optional[str]) -> None:
 
 
 def is_authenticated(token: Optional[str]) -> bool:
-    """Whether this request may use the panel.
-
-    No password means the panel is open, the same as before this module
-    existed -- ``authenticated`` is then true even without a cookie, so the
-    frontend does not have to special-case the unset state.
-    """
-    if not password_is_set():
+    """Whether this request may use the panel (single SQLite lock acquisition)."""
+    token_h = _token_hash(token) if token else None
+    pw_set, expires = store.check_auth_state(PASSWORD_KEY, token_h)
+    if not pw_set:
         return True
-    return session_valid(token)
+    return expires is not None and expires > time.time()
 
 
 # ---------------------------------------------------------------------
@@ -208,9 +216,21 @@ def client_id(request: Request) -> str:
 # Login rate limit
 # ---------------------------------------------------------------------
 
+def _prune_stale_failures_locked(now: float) -> None:
+    if len(_failures) <= _MAX_TRACKED_IDENTITIES:
+        return
+    for key in list(_failures):
+        fresh = [t for t in _failures[key] if now - t < LOGIN_WINDOW_S]
+        if fresh:
+            _failures[key] = fresh
+        else:
+            del _failures[key]
+
+
 def login_allowed(identity: str) -> bool:
     now = time.time()
     with _fail_lock:
+        _prune_stale_failures_locked(now)
         stamps = [t for t in _failures.get(identity, []) if now - t < LOGIN_WINDOW_S]
         if stamps:
             _failures[identity] = stamps
@@ -220,8 +240,10 @@ def login_allowed(identity: str) -> bool:
 
 
 def record_login_failure(identity: str) -> None:
+    now = time.time()
     with _fail_lock:
-        _failures.setdefault(identity, []).append(time.time())
+        _prune_stale_failures_locked(now)
+        _failures.setdefault(identity, []).append(now)
 
 
 def reset_login_failures(identity: str) -> None:

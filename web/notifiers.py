@@ -17,12 +17,18 @@ from __future__ import annotations
 import abc
 import dataclasses
 import html
+import ipaddress
 import json
 import logging
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
+import re
+import socket
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+from web.config import panel_port
 
 logger = logging.getLogger('futuresview.web')
 
@@ -62,6 +68,30 @@ class DeliveryResult:
 # Validation, masking, and HTTP helpers
 # ---------------------------------------------------------------------
 
+_METADATA_HOSTS = frozenset({
+    'metadata.google.internal',
+    'metadata.goog',
+    'metadata',
+    'instance-data',
+})
+
+_SENSITIVE_HEADER_NAMES = frozenset({
+    'authorization',
+    'proxy-authorization',
+    'cookie',
+    'set-cookie',
+    'x-api-key',
+    'api-key',
+    'apikey',
+    'x-auth-token',
+    'x-webhook-secret',
+})
+
+_SENSITIVE_HEADER_SUBSTRINGS = ('token', 'secret', 'password', 'apikey', 'api-key')
+
+_TOKEN_INVALID_RE = re.compile(r'[\s/?#@\\]')
+
+
 def _mask_secret(value: Optional[str]) -> str:
     text = (value or '').strip()
     if not text:
@@ -71,22 +101,150 @@ def _mask_secret(value: Optional[str]) -> str:
     return f'{text[:4]}…{text[-4:]}'
 
 
-def _validate_http_url(raw: str, *, field_name: str, allow_empty: bool = False) -> str:
+def _mask_proxy_url(proxy: Optional[str]) -> str:
+    text = (proxy or '').strip()
+    if not text:
+        return ''
+    parts = urlsplit(text)
+    if parts.username is None and parts.password is None:
+        return text
+    host = parts.hostname or ''
+    if ':' in host:
+        host = f'[{host}]'
+    netloc = f'••••@{host}'
+    if parts.port is not None:
+        netloc = f'{netloc}:{parts.port}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _proxy_secrets(proxy: Optional[str]) -> List[str]:
+    text = (proxy or '').strip()
+    if not text:
+        return []
+    parts = urlsplit(text)
+    found: List[str] = []
+    if parts.password:
+        found.append(parts.password)
+    if parts.username and parts.password:
+        found.append(f'{parts.username}:{parts.password}')
+    return found
+
+
+def _is_sensitive_header(name: str) -> bool:
+    low = (name or '').strip().lower()
+    if low in _SENSITIVE_HEADER_NAMES:
+        return True
+    return any(sub in low for sub in _SENSITIVE_HEADER_SUBSTRINGS)
+
+
+def _mask_headers(headers: Optional[dict]) -> Dict[str, str]:
+    masked: Dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        key = str(k)
+        val = str(v)
+        masked[key] = _mask_secret(val) if _is_sensitive_header(key) else val
+    return masked
+
+
+def _scrub_secrets(text: str, secrets: Iterable[Optional[str]]) -> str:
+    out = str(text or '')
+    for secret in secrets:
+        s = (secret or '').strip()
+        if s:
+            out = out.replace(s, '***')
+    return out
+
+
+def _local_host_ips() -> set:
+    ips = {'127.0.0.1', '::1', '0.0.0.0', '::'}
+    for family, probe in ((socket.AF_INET, ('192.0.2.1', 9)), (socket.AF_INET6, ('2001:db8::1', 9))):
+        try:
+            sock = socket.socket(family, socket.SOCK_DGRAM)
+            try:
+                sock.connect(probe)
+                ips.add(sock.getsockname()[0])
+            finally:
+                sock.close()
+        except OSError:
+            continue
+    return ips
+
+
+def _check_ip_allowed(ip_str: str, port: int, my_port: int, *, field_name: str) -> None:
+    ip_obj = ipaddress.ip_address(ip_str)
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
+        ip_obj = ip_obj.ipv4_mapped
+    if ip_obj.is_link_local or str(ip_obj) == 'fd00:ec2::254':
+        raise ValueError(f'{field_name} must not target cloud metadata or link-local addresses')
+    if port == my_port and (
+        ip_obj.is_loopback or ip_obj.is_unspecified or str(ip_obj) in _local_host_ips()
+    ):
+        raise ValueError(
+            f'{field_name} must not target the local FuturesView panel port ({my_port})',
+        )
+
+
+def _check_outbound_url(url: str, *, field_name: str, resolve_dns: bool = False) -> None:
+    parts = urlsplit(url)
+    host = (parts.hostname or '').strip().lower().rstrip('.')
+    if not host:
+        raise ValueError(f'{field_name} must include a valid host')
+    port = parts.port or (443 if parts.scheme == 'https' else 80)
+    my_port = panel_port()
+
+    if host in _METADATA_HOSTS:
+        raise ValueError(f'{field_name} must not target cloud metadata endpoints')
+    if host == 'localhost' and port == my_port:
+        raise ValueError(
+            f'{field_name} must not target the local FuturesView panel port ({my_port})',
+        )
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        is_literal_ip = False
+    else:
+        is_literal_ip = True
+
+    if is_literal_ip:
+        _check_ip_allowed(host, port, my_port, field_name=field_name)
+        return
+
+    if resolve_dns:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            return
+        for _fam, _kind, _proto, _canon, sockaddr in infos:
+            ip_str = sockaddr[0]
+            if '%' in ip_str:
+                ip_str = ip_str.split('%', 1)[0]
+            _check_ip_allowed(ip_str, port, my_port, field_name=field_name)
+
+
+def _validate_http_url(
+    raw: str, *, field_name: str, allow_empty: bool = False, forbid_query: bool = False,
+) -> str:
     url = (raw or '').strip()
     if not url:
         if allow_empty:
             return ''
         raise ValueError(f'{field_name} is required')
     parts = urlsplit(url)
-    if parts.scheme not in ('http', 'https') or not parts.netloc:
+    if parts.scheme not in ('http', 'https') or not parts.netloc or not parts.hostname:
         raise ValueError(f'{field_name} must be an http:// or https:// URL')
+    if forbid_query and (parts.query or parts.fragment or parts.username or parts.password):
+        raise ValueError(f'{field_name} must not contain query, fragment, or credentials')
+    _check_outbound_url(url, field_name=field_name, resolve_dns=False)
     return url
 
 
-def _validate_proxy_url(raw: Optional[str]) -> str:
+def _validate_proxy_url(raw: Optional[str], existing_proxy: str = '') -> str:
     proxy = (raw or '').strip()
     if not proxy:
         return ''
+    if existing_proxy and proxy == _mask_proxy_url(existing_proxy):
+        return existing_proxy
     parts = urlsplit(proxy)
     if parts.scheme not in ('http', 'https', 'socks5', 'socks5h') or not parts.netloc:
         raise ValueError(
@@ -108,7 +266,7 @@ def _make_client(*, proxy: str = '', timeout: float = HTTP_TIMEOUT_SECONDS) -> h
         return httpx.Client(**kwargs)
     except ImportError as exc:
         raise ValueError(
-            f'Proxy {proxy!r} requires optional dependency (e.g. httpx[socks]): {exc}',
+            f'Proxy {_mask_proxy_url(proxy)!r} requires optional dependency (e.g. httpx[socks]): {exc}',
         ) from exc
 
 
@@ -393,7 +551,47 @@ def format_report_text(report: dict, *, language: str = 'zh', use_html: bool = F
     return '\n'.join(lines)
 
 
-def split_message_chunks(text: str, max_len: int = TELEGRAM_MAX_CHARS) -> List[str]:
+def _split_long_line(line: str, max_len: int, *, preserve_html: bool = False) -> List[str]:
+    """Split a single line longer than ``max_len`` without breaking HTML tags/entities."""
+    if not preserve_html or ('<' not in line and '&' not in line):
+        return [line[start:start + max_len] for start in range(0, len(line), max_len)]
+
+    pieces: List[str] = []
+    pos = 0
+    in_bold = False
+    n = len(line)
+    while pos < n:
+        prefix = '<b>' if in_bold else ''
+        budget = max(1, max_len - len(prefix) - len('</b>'))
+        end = min(n, pos + budget)
+        if end < n:
+            # Avoid cutting inside an HTML tag (<...>) or entity (&...;)
+            lt = line.rfind('<', pos, end)
+            gt = line.rfind('>', pos, end)
+            if lt > gt and lt > pos:
+                end = lt
+            else:
+                amp = line.rfind('&', pos, end)
+                semi = line.rfind(';', pos, end)
+                if amp > semi and amp > pos and (end - amp) <= 12:
+                    end = amp
+        if end <= pos:
+            end = min(n, pos + budget)
+        segment = line[pos:end]
+        # Track <b> balance in this segment
+        opens = segment.count('<b>')
+        closes = segment.count('</b>')
+        still_bold = (1 if in_bold else 0) + opens - closes > 0
+        chunk = prefix + segment + ('</b>' if still_bold else '')
+        pieces.append(chunk)
+        in_bold = still_bold
+        pos = end
+    return pieces
+
+
+def split_message_chunks(
+    text: str, max_len: int = TELEGRAM_MAX_CHARS, *, preserve_html: bool = False,
+) -> List[str]:
     """Split a long message cleanly on blank lines / line breaks."""
     if len(text) <= max_len:
         return [text]
@@ -410,10 +608,9 @@ def split_message_chunks(text: str, max_len: int = TELEGRAM_MAX_CHARS) -> List[s
             current_lines = []
             current_len = 0
         if line_len > max_len:
-            # Rare fallback for a single abnormally long line.
-            for start in range(0, line_len, max_len):
-                piece = line[start:start + max_len]
-                if len(piece) == max_len:
+            pieces = _split_long_line(line, max_len, preserve_html=preserve_html)
+            for idx, piece in enumerate(pieces):
+                if idx < len(pieces) - 1 or len(piece) == max_len:
                     chunks.append(piece)
                 else:
                     current_lines = [piece]
@@ -463,12 +660,14 @@ class NotificationProvider(abc.ABC):
         config: dict,
         *,
         language: str = 'zh',
+        tz=None,
     ) -> DeliveryResult:
+        now_iso = report_now_iso(tz)
         sample = {
             'event': 'futuresview.alert_test',
             'trigger': 'test',
-            'generated_at': report_now_iso(),
-            'run_date': report_now_iso()[:10],
+            'generated_at': now_iso,
+            'run_date': now_iso[:10],
             'run_time_label': (
                 '测试消息' if language == 'zh' else 'Test Message'
             ),
@@ -480,7 +679,7 @@ class NotificationProvider(abc.ABC):
                     'name': '连接测试' if language == 'zh' else 'Connection Test',
                     'strategy': 'double_ma',
                     'params': {'fast': 10, 'slow': 30},
-                    'asof': report_now_iso()[:10],
+                    'asof': now_iso[:10],
                     'blown_up': False,
                     'error': None,
                     'symbols': [
@@ -513,10 +712,9 @@ class NotificationProvider(abc.ABC):
         return self.send(channel_id, channel_name, config, sample, language=language)
 
 
-def report_now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
+def report_now_iso(tz=None) -> str:
+    now = datetime.now(timezone.utc)
+    return (now.astimezone(tz) if tz is not None else now.astimezone()).isoformat(timespec='seconds')
 
 
 # ---------------------------------------------------------------------
@@ -531,25 +729,34 @@ class TelegramProvider(NotificationProvider):
     def validate_config(self, config: dict, existing: Optional[dict] = None) -> dict:
         if not isinstance(config, dict):
             raise ValueError('config must be an object')
+
+        api_base_raw = str(config.get('api_base') or '').strip()
+        api_base = (
+            _validate_http_url(api_base_raw, field_name='api_base', forbid_query=True).rstrip('/')
+            if api_base_raw else DEFAULT_TELEGRAM_API_BASE
+        )
+        existing_proxy = str((existing or {}).get('proxy') or '').strip()
+        proxy = _validate_proxy_url(config.get('proxy'), existing_proxy=existing_proxy)
+
         raw_token = config.get('bot_token')
         token = str(raw_token).strip() if raw_token is not None else ''
         if not token and existing:
+            existing_base = str(existing.get('api_base') or DEFAULT_TELEGRAM_API_BASE).rstrip('/')
+            base_redirected = api_base != existing_base and api_base != DEFAULT_TELEGRAM_API_BASE
+            proxy_redirected = bool(proxy) and proxy != existing_proxy
+            if base_redirected or proxy_redirected:
+                raise ValueError(
+                    'bot_token must be re-entered when changing api_base or proxy',
+                )
             token = str(existing.get('bot_token') or '').strip()
         if not token:
             raise ValueError('bot_token is required')
-        if any(ch.isspace() for ch in token):
-            raise ValueError('bot_token must not contain whitespace')
+        if _TOKEN_INVALID_RE.search(token) or '..' in token:
+            raise ValueError('bot_token contains invalid URL characters')
 
         chat_id = str(config.get('chat_id') or '').strip()
         if not chat_id:
             raise ValueError('chat_id is required')
-
-        api_base_raw = str(config.get('api_base') or '').strip()
-        api_base = (
-            _validate_http_url(api_base_raw, field_name='api_base').rstrip('/')
-            if api_base_raw else DEFAULT_TELEGRAM_API_BASE
-        )
-        proxy = _validate_proxy_url(config.get('proxy'))
 
         thread_raw = config.get('message_thread_id')
         thread_id: Optional[int] = None
@@ -577,7 +784,7 @@ class TelegramProvider(NotificationProvider):
             'bot_token_preview': _mask_secret(token),
             'chat_id': str(config.get('chat_id') or ''),
             'api_base': str(config.get('api_base') or DEFAULT_TELEGRAM_API_BASE),
-            'proxy': str(config.get('proxy') or ''),
+            'proxy': _mask_proxy_url(config.get('proxy')),
             'message_thread_id': config.get('message_thread_id'),
         }
 
@@ -595,6 +802,7 @@ class TelegramProvider(NotificationProvider):
         api_base = str(config.get('api_base') or DEFAULT_TELEGRAM_API_BASE).rstrip('/')
         proxy = str(config.get('proxy') or '').strip()
         thread_id = config.get('message_thread_id')
+        secrets = [token, *_proxy_secrets(proxy)]
 
         if not token or not chat_id:
             return DeliveryResult(
@@ -605,8 +813,19 @@ class TelegramProvider(NotificationProvider):
                 detail='Missing bot_token or chat_id',
             )
 
+        try:
+            _check_outbound_url(api_base, field_name='api_base', resolve_dns=(_HTTP_TRANSPORT is None))
+        except ValueError as exc:
+            return DeliveryResult(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                kind=self.kind,
+                ok=False,
+                detail=str(exc),
+            )
+
         html_text = format_report_text(report, language=language, use_html=True)
-        chunks = split_message_chunks(html_text, TELEGRAM_MAX_CHARS)
+        chunks = split_message_chunks(html_text, TELEGRAM_MAX_CHARS, preserve_html=True)
         endpoint = f'{api_base}/bot{token}/sendMessage'
 
         last_status: Optional[int] = None
@@ -623,8 +842,8 @@ class TelegramProvider(NotificationProvider):
                         payload['message_thread_id'] = int(thread_id)
                     resp = client.post(endpoint, json=payload)
                     last_status = resp.status_code
-                    if resp.status_code >= 400:
-                        desc = _extract_telegram_error(resp)
+                    if not (200 <= resp.status_code < 300):
+                        desc = _scrub_secrets(_extract_telegram_error(resp), secrets)
                         return DeliveryResult(
                             channel_id=channel_id,
                             channel_name=channel_name,
@@ -636,15 +855,27 @@ class TelegramProvider(NotificationProvider):
                     try:
                         body = resp.json()
                     except ValueError:
-                        body = {}
-                    if isinstance(body, dict) and body.get('ok') is False:
                         return DeliveryResult(
                             channel_id=channel_id,
                             channel_name=channel_name,
                             kind=self.kind,
                             ok=False,
                             status_code=resp.status_code,
-                            detail=f"Telegram API error: {body.get('description', 'unknown')}",
+                            detail='Telegram API returned non-JSON response',
+                        )
+                    if not isinstance(body, dict) or body.get('ok') is not True:
+                        desc = _scrub_secrets(
+                            str(body.get('description', 'unexpected response'))
+                            if isinstance(body, dict) else 'unexpected response',
+                            secrets,
+                        )
+                        return DeliveryResult(
+                            channel_id=channel_id,
+                            channel_name=channel_name,
+                            kind=self.kind,
+                            ok=False,
+                            status_code=resp.status_code,
+                            detail=f'Telegram API error: {desc}',
                         )
         except Exception as exc:  # noqa: BLE001 -- network/TLS/proxy errors must be caught per channel
             return DeliveryResult(
@@ -653,7 +884,7 @@ class TelegramProvider(NotificationProvider):
                 kind=self.kind,
                 ok=False,
                 status_code=last_status,
-                detail=f'{type(exc).__name__}: {exc}',
+                detail=_scrub_secrets(f'{type(exc).__name__}: {exc}', secrets),
             )
 
         detail = (
@@ -715,7 +946,13 @@ class WebhookProvider(NotificationProvider):
         if not isinstance(config, dict):
             raise ValueError('config must be an object')
         url = _validate_http_url(str(config.get('url') or ''), field_name='url')
-        proxy = _validate_proxy_url(config.get('proxy'))
+        existing_proxy = str((existing or {}).get('proxy') or '').strip()
+        proxy = _validate_proxy_url(config.get('proxy'), existing_proxy=existing_proxy)
+
+        existing_url = str((existing or {}).get('url') or '').strip()
+        destination_changed = bool(existing) and (
+            url != existing_url or (bool(proxy) and proxy != existing_proxy)
+        )
 
         clear_bearer = bool(config.get('clear_bearer_token'))
         raw_bearer = config.get('bearer_token')
@@ -723,8 +960,14 @@ class WebhookProvider(NotificationProvider):
         if clear_bearer:
             bearer = ''
         elif not bearer and existing:
-            bearer = str(existing.get('bearer_token') or '').strip()
+            prior_bearer = str(existing.get('bearer_token') or '').strip()
+            if prior_bearer and destination_changed:
+                raise ValueError(
+                    'bearer_token must be re-entered (or cleared) when changing webhook url or proxy',
+                )
+            bearer = prior_bearer
 
+        existing_headers = dict((existing or {}).get('headers') or {})
         raw_headers = config.get('headers')
         headers: Dict[str, str] = {}
         if raw_headers not in (None, ''):
@@ -739,9 +982,18 @@ class WebhookProvider(NotificationProvider):
                 key = str(k).strip()
                 if not key:
                     continue
-                if '\r' in key or '\n' in key or '\r' in str(v) or '\n' in str(v):
+                val = str(v)
+                if '\r' in key or '\n' in key or '\r' in val or '\n' in val:
                     raise ValueError('headers must not contain CR/LF characters')
-                headers[key] = str(v)
+                if _is_sensitive_header(key) and key in existing_headers:
+                    prior_val = str(existing_headers[key])
+                    if val == _mask_secret(prior_val):
+                        if destination_changed:
+                            raise ValueError(
+                                f'Header {key!r} must be re-entered when changing webhook url or proxy',
+                            )
+                        val = prior_val
+                headers[key] = val
 
         template = str(config.get('payload_template') or '').strip()
         if template:
@@ -767,8 +1019,8 @@ class WebhookProvider(NotificationProvider):
             'bearer_token': '',
             'has_bearer_token': bool(bearer),
             'bearer_token_preview': _mask_secret(bearer),
-            'headers': dict(config.get('headers') or {}),
-            'proxy': str(config.get('proxy') or ''),
+            'headers': _mask_headers(config.get('headers')),
+            'proxy': _mask_proxy_url(config.get('proxy')),
             'payload_template': str(config.get('payload_template') or ''),
         }
 
@@ -792,10 +1044,38 @@ class WebhookProvider(NotificationProvider):
             )
         proxy = str(config.get('proxy') or '').strip()
         bearer = str(config.get('bearer_token') or '').strip()
-        headers = {'Content-Type': 'application/json'}
-        for k, v in (config.get('headers') or {}).items():
-            headers[str(k)] = str(v)
-        if bearer and not any(k.lower() == 'authorization' for k in headers):
+        cfg_headers = config.get('headers') or {}
+        secrets = [
+            bearer,
+            *_proxy_secrets(proxy),
+            *(str(v) for k, v in cfg_headers.items() if _is_sensitive_header(str(k))),
+        ]
+
+        try:
+            _check_outbound_url(url, field_name='url', resolve_dns=(_HTTP_TRANSPORT is None))
+        except ValueError as exc:
+            return DeliveryResult(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                kind=self.kind,
+                ok=False,
+                detail=str(exc),
+            )
+
+        headers: Dict[str, str] = {}
+        has_content_type = False
+        has_auth = False
+        for k, v in cfg_headers.items():
+            key = str(k)
+            headers[key] = str(v)
+            low = key.lower()
+            if low == 'content-type':
+                has_content_type = True
+            elif low == 'authorization':
+                has_auth = True
+        if not has_content_type:
+            headers['Content-Type'] = 'application/json'
+        if bearer and not has_auth:
             headers['Authorization'] = f'Bearer {bearer}'
 
         title = _report_title(report, language)
@@ -840,11 +1120,11 @@ class WebhookProvider(NotificationProvider):
                 channel_name=channel_name,
                 kind=self.kind,
                 ok=False,
-                detail=f'{type(exc).__name__}: {exc}',
+                detail=_scrub_secrets(f'{type(exc).__name__}: {exc}', secrets),
             )
 
-        if resp.status_code >= 400:
-            snippet = (resp.text or '').strip()[:200]
+        if not (200 <= resp.status_code < 300):
+            snippet = _scrub_secrets((resp.text or '').strip()[:200], secrets)
             return DeliveryResult(
                 channel_id=channel_id,
                 channel_name=channel_name,

@@ -88,3 +88,9 @@ def test_build_map_follows_the_products_main_months():
     alt = build_date_contract_map(dates, raw, main_months=(5, 7))
     assert alt[pd.Timestamp('2025-03-31')] == 'SA2505'
     assert alt[pd.Timestamp('2025-04-01')] == 'SA2507'
+
+
+def test_large_lead_months_beyond_two_years_still_finds_target():
+    assert target_expiry('2025-01-15', (1, 5, 9), lead_months=24) == (2027, 5)
+    assert target_expiry('2025-01-15', (1, 5, 9), lead_months=36) == (2028, 5)
+

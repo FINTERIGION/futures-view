@@ -13,6 +13,17 @@ DB_PATH = os.path.join(RESULTS_DIR, 'webpanel.db')
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8888
+PANEL_PORT_ENV = 'FT_WEB_PORT'
+
+
+def panel_port() -> int:
+    """Port this panel is listening on (set by ``main.py web``, else ``DEFAULT_PORT``)."""
+    raw = (os.environ.get(PANEL_PORT_ENV) or '').strip()
+    if raw.isdigit():
+        port = int(raw)
+        if 1 <= port <= 65535:
+            return port
+    return DEFAULT_PORT
 
 # Host header allowlist, enforced by HostHeaderMiddleware in `web.app`.
 #
@@ -62,8 +73,18 @@ def normalize_host(raw: str) -> str:
     host = (raw or '').strip()
     if host.startswith('['):
         end = host.find(']')
-        return host[: end + 1].lower() if end != -1 else ''
-    return host.split(':', 1)[0].lower()
+        if end == -1:
+            return ''
+        rest = host[end + 1:]
+        if rest and not (rest.startswith(':') and rest[1:].isdigit()):
+            return ''
+        return host[: end + 1].lower()
+    if ':' in host:
+        name, port = host.split(':', 1)
+        if not port.isdigit():
+            return ''
+        return name.lower()
+    return host.lower()
 
 
 def host_allowed(raw_host: str, allowed=None) -> bool:
@@ -145,7 +166,16 @@ def write_origin_allowed(origin, sec_fetch_site, raw_host: str, allowed=None) ->
     parts = urlsplit(origin)
     if parts.scheme not in ('http', 'https') or not parts.netloc:
         return False
-    return parts.netloc == (raw_host or '').strip().lower()
+    origin_netloc = _strip_default_port(parts.netloc.lower(), parts.scheme)
+    host_netloc = _strip_default_port((raw_host or '').strip().lower(), parts.scheme)
+    return origin_netloc == host_netloc
+
+
+def _strip_default_port(netloc: str, scheme: str) -> str:
+    default_port = ':80' if scheme == 'http' else ':443'
+    if netloc.endswith(default_port):
+        return netloc[: -len(default_port)]
+    return netloc
 
 
 MARKET_CACHE_SIZE = 3

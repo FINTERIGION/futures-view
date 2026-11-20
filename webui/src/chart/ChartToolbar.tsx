@@ -1,13 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../components/Icon'
-import { useJobSlot } from '../shell/JobsProvider'
-import { useWorkspace } from '../shell/WorkspaceContext'
+import { useJobLifecycle, useJobSlot } from '../shell/jobsStore'
+import { useWorkspace } from '../shell/workspaceStore'
 import { IndicatorPicker } from './IndicatorPicker'
 
 export function ChartToolbar() {
   const { t } = useTranslation()
   const { runId, setRunId } = useWorkspace()
   const job = useJobSlot('backtest')
+  const lifecycle = useJobLifecycle()
 
   /** Leave the backtest view entirely: the run comes off the chart, and the
    * drawer's result tables and finished-job block go with it. Dropping the
@@ -19,7 +20,10 @@ export function ChartToolbar() {
    */
   const exitBacktest = () => {
     setRunId(null)
-    if (!job.isActive) job.reset()
+    if (!job.isActive) {
+      lifecycle.clearPendingBacktestRun()
+      job.reset()
+    }
   }
 
   return (

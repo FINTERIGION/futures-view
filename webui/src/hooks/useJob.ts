@@ -43,6 +43,7 @@ export function useJob() {
   const [lost, setLost] = useState(false)
   const sourceRef = useRef<EventSource | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const genRef = useRef(0)
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -59,26 +60,26 @@ export function useJob() {
   }, [stopPolling])
 
   /** A stream frame and a plain GET carry the same fields, except that only
-   * the GET includes `result`. */
-  const applyState = useCallback((payload: Partial<JobState> & { status: string }) => {
-    setState(payload as JobState)
+   * the GET includes `result` and SSE frames omit `id` -- always inject the
+   * known job id so `state.id` is stable from the very first frame. */
+  const applyState = useCallback((id: string, payload: Partial<JobState> & { status: string }) => {
+    setState({ ...(payload as JobState), id: payload.id ?? id })
   }, [])
 
   const startPolling = useCallback(
-    (id: string) => {
+    (id: string, gen: number) => {
       if (pollRef.current !== null) return
       const tick = () => {
         void jobsApi
           .get(id)
           .then((job) => {
-            applyState(job)
+            if (genRef.current !== gen) return
+            applyState(id, job)
             if (TERMINAL.includes(job.status)) stopPolling()
           })
           .catch((err: unknown) => {
+            if (genRef.current !== gen) return
             if (err instanceof ApiError && err.status === 404) {
-              // The server has no record of this job and never will again.
-              // Stop asking and say so; whatever `state` last held is now the
-              // most that can be known about it.
               stopPolling()
               setLost(true)
               return
@@ -92,12 +93,8 @@ export function useJob() {
     [applyState, stopPolling],
   )
 
-  /** Forget the current job outright -- stream closed, state and log dropped.
-   * `start` clears the same things before it connects; the workspace's "exit
-   * backtest" control calls it on its own, because a *finished* job is what
-   * BacktestPanel re-overlays on the chart (see its auto-overlay effect) and
-   * leaving one behind made that button undo itself. */
   const reset = useCallback(() => {
+    genRef.current += 1
     stop()
     setJobId(null)
     setState(null)
@@ -108,6 +105,7 @@ export function useJob() {
   const start = useCallback(
     (id: string) => {
       reset()
+      const gen = ++genRef.current
       setJobId(id)
 
       const source = new EventSource(jobsApi.streamUrl(id))
@@ -115,28 +113,40 @@ export function useJob() {
       setStreaming(true)
 
       source.onopen = () => {
+        if (genRef.current !== gen) return
         setStreaming(true)
         stopPolling()          // the stream is authoritative again
       }
 
       source.onmessage = (evt) => {
+        if (genRef.current !== gen) return
         try {
           const payload = JSON.parse(evt.data)
           if (payload.type === 'log') {
             setLogs((prev) => [...prev, { level: payload.level, message: payload.message }])
           } else if (payload.type === 'state') {
-            applyState(payload)
+            applyState(id, payload)
             if (TERMINAL.includes(payload.status)) {
               source.close()
               sourceRef.current = null
               setStreaming(false)
-              // The state frame deliberately excludes `result` (a backtest's
-              // can be large). Fetch it once, now that the job is terminal,
-              // via the GET that does include it.
-              // Failing here costs only the result: the terminal status is
-              // already applied, and every panel that renders a run's numbers
-              // reads them from the run store rather than from this payload.
-              void jobsApi.get(id).then(applyState).catch(() => {})
+              // Fetch the terminal job record once so `result` is populated.
+              // On failure, still settle `result` (or `lost` on 404) so
+              // consumers waiting on `'result' in state` never deadlock.
+              void jobsApi
+                .get(id)
+                .then((job) => {
+                  if (genRef.current !== gen) return
+                  applyState(id, job)
+                })
+                .catch((err: unknown) => {
+                  if (genRef.current !== gen) return
+                  if (err instanceof ApiError && err.status === 404) {
+                    setLost(true)
+                    return
+                  }
+                  setState((prev) => (prev ? { ...prev, result: undefined } : prev))
+                })
             }
           }
         } catch {
@@ -145,14 +155,11 @@ export function useJob() {
       }
 
       source.onerror = () => {
-        // EventSource retries on its own, but a reconnect replays this job's
-        // whole buffered log and would duplicate everything already shown.
-        // Close it and switch to polling, which carries status, progress and
-        // the final result -- everything except live log lines.
+        if (genRef.current !== gen) return
         source.close()
         sourceRef.current = null
         setStreaming(false)
-        startPolling(id)
+        startPolling(id, gen)
       }
     },
     [applyState, reset, startPolling, stopPolling],
@@ -162,17 +169,17 @@ export function useJob() {
 
   const cancel = useCallback(() => {
     if (!jobId) return
+    const gen = genRef.current
     void jobsApi.cancel(jobId).catch(() => {
-      // A cancel can legitimately fail: 409 once the job has already reached a
-      // terminal state (the click raced the last state frame in), and 404 once
-      // the server has forgotten it. Neither is worth an alert -- but leaving
-      // the rejection unhandled meant the button did nothing, said nothing,
-      // and left the panel showing a job it had just been told is over. Ask
-      // for the current state instead, and let that speak.
+      if (genRef.current !== gen) return
       void jobsApi
         .get(jobId)
-        .then(applyState)
+        .then((job) => {
+          if (genRef.current !== gen) return
+          applyState(jobId, job)
+        })
         .catch((err: unknown) => {
+          if (genRef.current !== gen) return
           if (err instanceof ApiError && err.status === 404) setLost(true)
         })
     })
@@ -185,15 +192,10 @@ export function useJob() {
     start,
     cancel,
     reset,
-    /** False once the event stream has dropped and the hook is polling instead
-     * -- callers can use it to explain why the log stopped growing. */
     streaming,
-    /** The server no longer has this job (it restarted, or the job aged out of
-     * `JOB_RETENTION`). Its last known state is all there is; it will not
-     * progress and cannot be cancelled. */
     lost,
-    // A lost job is not active in any sense the UI cares about -- leaving it
-    // "running" is what kept the Run button disabled with nothing to wait for.
-    isActive: !lost && state ? ['queued', 'running'].includes(state.status) : false,
+    // Treat the brief handshake between `start(id)` and the first SSE frame as
+    // active too so double-clicks cannot submit a duplicate job in that gap.
+    isActive: !lost && (state ? ['queued', 'running'].includes(state.status) : jobId !== null),
   }
 }

@@ -119,15 +119,11 @@ export function EChart({
         zoomRef.current = { start: 0, end: 100, len }
       }
     }
-  }, [option, preserveDataZoom])
+  }, [option, preserveDataZoom, dark])
 
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !preserveDataZoom) return
-    // Reads `optionRef.current` rather than closing over `option` directly,
-    // so this listener (attached once per chart instance) always measures
-    // the axis that is actually on screen right now, not the one from
-    // whichever render first wired it up.
     const onZoom = () => {
       const zoom = (chart.getOption().dataZoom as Array<{ start: number; end: number }> | undefined)?.[0]
       if (zoom) zoomRef.current = { start: zoom.start, end: zoom.end, len: categoryLength(optionRef.current) }
@@ -141,15 +137,16 @@ export function EChart({
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !onEvents) return
-    for (const [name, handler] of Object.entries(onEvents)) {
+    const entries = Object.entries(onEvents)
+    for (const [name, handler] of entries) {
       chart.on(name, handler)
     }
     return () => {
-      for (const name of Object.keys(onEvents)) {
-        chart.off(name)
+      for (const [name, handler] of entries) {
+        chart.off(name, handler)
       }
     }
-  }, [onEvents])
+  }, [onEvents, dark])
 
   return <div ref={ref} className={className} style={{ width: '100%', height }} />
 }

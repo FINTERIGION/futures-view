@@ -1,5 +1,6 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { Icon } from './Icon'
 
 /**
@@ -23,14 +24,23 @@ export function Modal({
   children: ReactNode
   footer?: ReactNode
 }) {
+  const { t } = useTranslation()
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
+
   useEffect(() => {
     if (!open || !closeOnEscape) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation()
+        onCloseRef.current()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, closeOnEscape, onClose])
+  }, [open, closeOnEscape])
 
   if (!open) return null
 
@@ -46,7 +56,7 @@ export function Modal({
       >
         <div className="modal-header">
           <h3>{title}</h3>
-          <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label="Close">
+          <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label={t('common.close')}>
             <Icon name="close" />
           </button>
         </div>

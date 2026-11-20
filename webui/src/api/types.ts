@@ -67,13 +67,13 @@ export interface ExchangeMeta {
 
 export interface Bar {
   date: string
-  open: number
-  high: number
-  low: number
-  close: number
-  settle: number
-  oi: number
-  volume: number
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number | null
+  settle: number | null
+  oi: number | null
+  volume: number | null
 }
 
 export interface RollPoint {
@@ -188,7 +188,7 @@ export interface TradeLog {
   direction: string
   symbol: string
   contract: string
-  contracts: string[]
+  contracts: string
   n_rolls: number
   open_price: number
   close_price: number | null
@@ -197,9 +197,9 @@ export interface TradeLog {
   commission: number
   net_pnl: number
   margin_used: number
-  open_at_end: boolean
-  forced: boolean
-  exit_reason: string
+  open_at_end: number | boolean
+  forced: number | boolean
+  exit_reason: string | null
   open_bar: number
   close_bar: number | null
 }
@@ -230,12 +230,12 @@ export interface RunDetail extends RunSummary {
 export interface RunPrice {
   symbol: string
   dates: string[]
-  open: number[]
-  high: number[]
-  low: number[]
-  close: number[]
-  volume: number[]
-  oi: number[]
+  open: (number | null)[]
+  high: (number | null)[]
+  low: (number | null)[]
+  close: (number | null)[]
+  volume: (number | null)[]
+  oi: (number | null)[]
   signals: Array<{ date: string; price: number; direction: string; size: number; comm: number; symbol: string }>
 }
 

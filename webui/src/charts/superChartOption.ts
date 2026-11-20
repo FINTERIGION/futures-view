@@ -83,7 +83,7 @@ interface TooltipParam {
  * green when it fell — the Chinese-market candle convention — at the same
  * half opacity the volume bars use. */
 const dayBarStyle = (b: Bar) => ({
-  color: b.close >= b.open ? CANDLE.up : CANDLE.down,
+  color: (b.close ?? 0) >= (b.open ?? 0) ? CANDLE.up : CANDLE.down,
   opacity: 0.5,
 })
 
@@ -289,8 +289,7 @@ export function superChartOption(input: SuperChartInput): EChartsOption {
       }
     })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const series: any[] = []
+  const series: unknown[] = []
   allPanes.forEach((pane, i) => {
     if (pane === 'price') {
       series.push({
@@ -413,16 +412,19 @@ export function superChartOption(input: SuperChartInput): EChartsOption {
         // the wrong four numbers.
         const b = bars[p.dataIndex]
         if (!b) return []
-        const dot = subDot(b.close >= b.open ? CANDLE.up : CANDLE.down)
-        const cells: [string, number][] = [
+        const dot = subDot((b.close ?? 0) >= (b.open ?? 0) ? CANDLE.up : CANDLE.down)
+        const cells: [string, number | null][] = [
           ['open', b.open], ['close', b.close], ['lowest', b.low], ['highest', b.high],
         ]
-        return cells.map(([label, v]) => row(dot, label, v.toFixed(2)))
+        return cells.map(([label, v]) =>
+          row(dot, label, typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '--'),
+        )
       }
       // Each series still declares its own precision through the
       // `valueFormatter` it was built with; a global formatter bypasses the
       // one ECharts would have applied, so it is applied here instead.
-      const fmt = series[p.seriesIndex]?.tooltip?.valueFormatter
+      const s = series[p.seriesIndex] as { tooltip?: { valueFormatter?: (v: unknown) => unknown } } | undefined
+      const fmt = s?.tooltip?.valueFormatter
       const value = fmt
         ? String(fmt(p.value))
         : typeof p.value === 'number'
@@ -446,6 +448,6 @@ export function superChartOption(input: SuperChartInput): EChartsOption {
       { type: 'inside', xAxisIndex: xAxisIndexAll },
       { type: 'slider', xAxisIndex: xAxisIndexAll, height: 16, bottom: 4, borderColor: 'transparent' },
     ],
-    series,
+    series: series as EChartsOption['series'],
   }
 }
