@@ -2083,7 +2083,9 @@ def test_bars_and_market_cache_invalidate_blocks_stale_concurrent_load(monkeypat
         def __init__(self, symbols):
             self.symbols = symbols
 
-        def load_dataframe(self, start_date=None, end_date=None, symbol=None):
+        def load_series_dataframe(
+            self, series='weighted', start_date=None, end_date=None, symbol=None
+        ):
             nonlocal calls
             calls += 1
             if calls == 1:
