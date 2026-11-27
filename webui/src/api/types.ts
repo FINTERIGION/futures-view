@@ -65,6 +65,8 @@ export interface ExchangeMeta {
   default_roll_lead_months: number
 }
 
+export type BarSeries = 'weighted' | 'main' | `m${string}`
+
 export interface Bar {
   date: string
   open: number | null
@@ -74,6 +76,7 @@ export interface Bar {
   settle: number | null
   oi: number | null
   volume: number | null
+  contract?: string
 }
 
 export interface RollPoint {
@@ -161,6 +164,7 @@ export interface IndicatorSeries {
 
 export interface IndicatorValues {
   symbol: string
+  series?: string
   indicator: string
   params: Record<string, unknown>
   /** Values carry their own dates so the chart aligns by date, not position. */

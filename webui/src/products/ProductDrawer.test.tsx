@@ -12,13 +12,11 @@ import { ProductDrawer } from './ProductDrawer'
 vi.mock('../api/endpoints', () => ({
   productsApi: {
     get: vi.fn(), update: vi.fn(), create: vi.fn(), remove: vi.fn(),
-    exchanges: vi.fn(), bars: vi.fn(), roll: vi.fn(),
+    exchanges: vi.fn(),
   },
   jobsApi: { get: vi.fn(), cancel: vi.fn(), streamUrl: (id: string) => `/api/jobs/${id}/stream` },
   indicatorsApi: { list: vi.fn(), get: vi.fn(), values: vi.fn(), reload: vi.fn() },
 }))
-
-vi.mock('../components/EChart', () => ({ EChart: () => <div data-testid="chart" /> }))
 
 function product(margin: number, commissionRate: number) {
   return {
@@ -49,8 +47,6 @@ function renderDrawer(onClose = vi.fn()) {
 
 beforeEach(() => {
   vi.mocked(productsApi.exchanges).mockResolvedValue({ exchanges: ['CZCE', 'SHFE'], default_main_months: [1, 5, 9], default_roll_lead_months: 1 })
-  vi.mocked(productsApi.bars).mockResolvedValue({ symbol: 'SA', bars: [] })
-  vi.mocked(productsApi.roll).mockResolvedValue({ symbol: 'SA', roll: [] })
   vi.mocked(productsApi.update).mockResolvedValue(product(0.125, 0.0001) as never)
 })
 

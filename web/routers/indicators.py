@@ -18,6 +18,7 @@ import threading
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 
+from datafeed.data_manager import normalize_series_name
 from datafeed.products import get_product, normalize_symbol
 from indicators import discover_indicators, load_registered_indicator
 from indicators.base import (
@@ -261,6 +262,7 @@ def product_indicator(
     key: str,
     start: str = None,
     end: str = None,
+    series: str = Query('weighted'),
     p: list[str] = Query(default_factory=list),
 ):
     """Indicator values for one product, over the same bars the chart draws.
@@ -285,7 +287,8 @@ def product_indicator(
     params = _overrides(cls, p)
 
     try:
-        df = bars_cache.get(code, start, end)
+        norm_series = normalize_series_name(series)
+        df = bars_cache.get(code, start, end, series=norm_series)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -333,6 +336,7 @@ def product_indicator(
 
     return jsonable({
         'symbol': code,
+        'series': norm_series,
         'indicator': key,
         'params': {**base_params, **params},
         # Dates travel with the values so the chart can align by date rather

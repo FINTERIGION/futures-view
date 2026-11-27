@@ -198,12 +198,13 @@ export function AlertPanel() {
   const { t } = useTranslation()
   const toast = useToast()
   const queryClient = useQueryClient()
-  const { universe, setChartSymbol, setSidebarOpen } = useWorkspace()
+  const { universe, setChartSymbol, setSidebarOpen, prefillBacktest, alertPrefill } = useWorkspace()
   const job = useJobSlot('alert')
   const dataJob = useJobSlot('data')
   const jobRef = useRef(job)
   const entriesRef = useRef<AlertMonitor[]>([])
   const universeRef = useRef(universe)
+  const handledPrefillSeqRef = useRef(0)
 
   const { data: strategies } = useQuery({ queryKey: ['strategies'], queryFn: strategiesApi.list })
   const monitorsQuery = useQuery({
@@ -465,7 +466,7 @@ export function AlertPanel() {
   const composeSeedKey = composer && composeStrategy ? `${composeSeq}:${composeStrategy.key}` : null
   if (composer && composeStrategy && composeSeedKey && seededKey !== composeSeedKey) {
     const initial =
-      composer.mode === 'new' || composeStrategy.key !== composer.initialStrategy
+      (composer.mode === 'new' && !composer.initialStrategy) || composeStrategy.key !== composer.initialStrategy
         ? rememberedParams(composeStrategy.key)
         : composeInitialParams
     draft = seedParamDraft(composeStrategy, initial)
@@ -495,6 +496,22 @@ export function AlertPanel() {
     setSeededKey(null)
     setSaveError(null)
   }
+
+  // Open prefilled composer when arriving via "Save to Signals" from Backtest.
+  useEffect(() => {
+    if (!alertPrefill || alertPrefill.seq === handledPrefillSeqRef.current) return
+    handledPrefillSeqRef.current = alertPrefill.seq
+    const { strategy, symbols, params } = alertPrefill.value
+    const info = strategies?.find((s) => s.key === strategy)
+    setComposer({ mode: 'new', initialStrategy: strategy })
+    setComposeSeq((n) => n + 1)
+    setDraftStrategy(strategy)
+    setComposeInitialParams(params)
+    setParamDraft(info ? seedParamDraft(info, params) : {})
+    setDraftUniverse([...symbols])
+    setSeededKey(null)
+    setSaveError(null)
+  }, [alertPrefill, strategies])
 
   const onSave = () => {
     if (!composer || !canSave || !parsedParams.ok) return
@@ -612,19 +629,6 @@ export function AlertPanel() {
       <button
         type="button"
         className="btn btn-sm btn-ghost btn-icon"
-        title={t('alerts.updateData')}
-        aria-label={t('alerts.updateData')}
-        disabled={dataStarting || dataJob.isActive || previewSymbols(entry, universe).length === 0}
-        onClick={(e) => {
-          e.stopPropagation()
-          void runDataUpdate(entry)
-        }}
-      >
-        <Icon name="download" size={14} />
-      </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-ghost btn-icon"
         title={t('alerts.refresh')}
         aria-label={t('alerts.refresh')}
         onClick={(e) => {
@@ -634,42 +638,57 @@ export function AlertPanel() {
       >
         <Icon name="refresh" size={14} />
       </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-ghost btn-icon"
-        title={t('alerts.edit')}
-        aria-label={t('alerts.edit')}
-        onClick={(e) => {
-          e.stopPropagation()
-          openCompose('edit', entry)
-        }}
-      >
-        <Icon name="pencil" size={14} />
-      </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-ghost btn-icon"
-        title={t('alerts.copy')}
-        aria-label={t('alerts.copy')}
-        onClick={(e) => {
-          e.stopPropagation()
-          openCompose('copy', entry)
-        }}
-      >
-        <Icon name="copy" size={14} />
-      </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-danger btn-icon"
-        title={t('common.delete')}
-        aria-label={t('common.delete')}
-        onClick={(e) => {
-          e.stopPropagation()
-          setConfirmDelete(entry)
-        }}
-      >
-        <Icon name="trash" size={14} />
-      </button>
+      <span className="alert-row-secondary">
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost btn-icon"
+          title={t('alerts.updateData')}
+          aria-label={t('alerts.updateData')}
+          disabled={dataStarting || dataJob.isActive || previewSymbols(entry, universe).length === 0}
+          onClick={(e) => {
+            e.stopPropagation()
+            void runDataUpdate(entry)
+          }}
+        >
+          <Icon name="download" size={14} />
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost btn-icon"
+          title={t('alerts.edit')}
+          aria-label={t('alerts.edit')}
+          onClick={(e) => {
+            e.stopPropagation()
+            openCompose('edit', entry)
+          }}
+        >
+          <Icon name="pencil" size={14} />
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost btn-icon"
+          title={t('alerts.copy')}
+          aria-label={t('alerts.copy')}
+          onClick={(e) => {
+            e.stopPropagation()
+            openCompose('copy', entry)
+          }}
+        >
+          <Icon name="copy" size={14} />
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-danger-ghost btn-icon"
+          title={t('common.delete')}
+          aria-label={t('common.delete')}
+          onClick={(e) => {
+            e.stopPropagation()
+            setConfirmDelete(entry)
+          }}
+        >
+          <Icon name="trash" size={14} />
+        </button>
+      </span>
     </div>
   )
 
@@ -743,6 +762,20 @@ export function AlertPanel() {
           {snap?.asof && <span className="field-hint">{t('alerts.asof', { date: snap.asof })}</span>}
           <button
             type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() =>
+              prefillBacktest({
+                strategy: entry.strategy,
+                symbols: previewSymbols(entry, universe),
+                params: entry.params,
+              })
+            }
+          >
+            <Icon name="arrow-up-right" size={13} />
+            {t('alerts.openInBacktest')}
+          </button>
+          <button
+            type="button"
             className="btn btn-sm btn-primary"
             disabled={symbols.length === 0}
             onClick={() => void startPreview(entry)}
@@ -788,7 +821,7 @@ export function AlertPanel() {
       <div className="toolbar alerts-toolbar">
         <button
           type="button"
-          className={`btn btn-sm ${composer?.mode === 'new' ? 'btn-primary' : ''}`}
+          className={`btn btn-sm ${composer?.mode === 'new' ? 'btn-soft' : ''}`}
           onClick={() => (composer?.mode === 'new' ? setComposer(null) : openCompose('new'))}
         >
           <Icon name="plus" size={14} />
@@ -796,7 +829,7 @@ export function AlertPanel() {
         </button>
         <button
           type="button"
-          className={`btn btn-sm ${pendingOnly ? 'btn-primary' : ''}`}
+          className={`btn btn-sm ${pendingOnly ? 'btn-soft' : ''}`}
           aria-pressed={pendingOnly}
           onClick={() => setPendingOnly((v) => !v)}
         >
@@ -825,33 +858,39 @@ export function AlertPanel() {
 
       {composer && (
         <Card title={t(`alerts.${composer.mode}Title`)} className="alert-composer">
-          <div className="field">
-            <label htmlFor="alert-composer-strategy">{t('common.strategy')}</label>
-            <select id="alert-composer-strategy" value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
-              {(strategies ?? []).map((s) => (
-                <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
-                  {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
-                </option>
-              ))}
-            </select>
-            <p className="field-hint">{t('alerts.paramsHint')}</p>
+          <div className="alert-composer-grid">
+            <div>
+              <div className="field">
+                <label htmlFor="alert-composer-strategy">{t('common.strategy')}</label>
+                <select id="alert-composer-strategy" value={strategyKey} onChange={(e) => setDraftStrategy(e.target.value)}>
+                  {(strategies ?? []).map((s) => (
+                    <option key={s.key} value={s.key} disabled={s.errors.length > 0}>
+                      {s.errors.length > 0 ? `${s.key} (${t('backtest.strategyBroken')})` : s.key}
+                    </option>
+                  ))}
+                </select>
+                <p className="field-hint">{t('alerts.paramsHint')}</p>
+              </div>
+              {composeStrategy && (
+                <StrategyParamFields
+                  strategy={composeStrategy}
+                  paramDraft={draft}
+                  onParamDraftChange={(name, raw) => setParamDraft({ ...draft, [name]: raw })}
+                  onResetParams={() => composeStrategy && setParamDraft(seedParamDraft(composeStrategy, {}))}
+                  paramErrors={parsedParams.errors}
+                  idPrefix="alert-param"
+                />
+              )}
+            </div>
+            <div>
+              <UniverseStrip
+                value={draftUniverse}
+                liveUniverse={universe}
+                onChange={setDraftUniverse}
+                onManage={() => setSidebarOpen(true)}
+              />
+            </div>
           </div>
-          {composeStrategy && (
-            <StrategyParamFields
-              strategy={composeStrategy}
-              paramDraft={draft}
-              onParamDraftChange={(name, raw) => setParamDraft({ ...draft, [name]: raw })}
-              onResetParams={() => composeStrategy && setParamDraft(seedParamDraft(composeStrategy, {}))}
-              paramErrors={parsedParams.errors}
-              idPrefix="alert-param"
-            />
-          )}
-          <UniverseStrip
-            value={draftUniverse}
-            liveUniverse={universe}
-            onChange={setDraftUniverse}
-            onManage={() => setSidebarOpen(true)}
-          />
           {saveError && <p className="field-error">{saveError}</p>}
           <div className="toolbar alert-composer-actions">
             <button type="button" className="btn btn-primary" onClick={onSave} disabled={!canSave}>

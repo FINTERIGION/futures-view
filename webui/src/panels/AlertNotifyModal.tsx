@@ -413,6 +413,15 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
   const tzOptions = COMMON_TIMEZONES.includes(scheduleDraft.timezone)
     ? COMMON_TIMEZONES
     : [scheduleDraft.timezone, ...COMMON_TIMEZONES]
+  const scheduleDirty = Boolean(
+    schedule &&
+      (scheduleDraft.enabled !== schedule.enabled ||
+        scheduleDraft.timezone !== schedule.timezone ||
+        scheduleDraft.weekdays_only !== schedule.weekdays_only ||
+        scheduleDraft.update_data !== schedule.update_data ||
+        scheduleDraft.language !== schedule.language ||
+        scheduleDraft.times.join(',') !== (schedule.times.length > 0 ? schedule.times : ['15:30']).join(',')),
+  )
 
   return (
     <>
@@ -594,6 +603,9 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                   <Icon name="send" size={14} />
                   {t('alerts.notify.sendNow')}
                 </button>
+                {scheduleDirty && (
+                  <span className="notify-dirty-hint">{t('alerts.notify.unsavedChanges')}</span>
+                )}
               </div>
 
               {dispatchJob.state && (
@@ -685,49 +697,59 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                             }
                           />
                         </div>
-                        <div className="notify-grid-2">
+                        <div className="field">
+                          <label htmlFor="ch-tg-chat">{t('alerts.notify.chatId')}</label>
+                          <input
+                            id="ch-tg-chat"
+                            type="text"
+                            required
+                            value={channelDraft.chatId}
+                            onChange={(e) => setChannelDraft({ ...channelDraft, chatId: e.target.value })}
+                            placeholder={t('alerts.notify.chatIdPlaceholder')}
+                          />
+                        </div>
+                        <details
+                          className="notify-advanced"
+                          open={Boolean(
+                            channelDraft.threadId ||
+                              channelDraft.proxy ||
+                              (channelDraft.apiBase && channelDraft.apiBase !== 'https://api.telegram.org'),
+                          )}
+                        >
+                          <summary>{t('alerts.notify.advancedNetwork')}</summary>
+                          <div className="notify-grid-2">
+                            <div className="field">
+                              <label htmlFor="ch-tg-thread">{t('alerts.notify.threadId')}</label>
+                              <input
+                                id="ch-tg-thread"
+                                type="number"
+                                min={1}
+                                value={channelDraft.threadId}
+                                onChange={(e) => setChannelDraft({ ...channelDraft, threadId: e.target.value })}
+                              />
+                            </div>
+                            <div className="field">
+                              <label htmlFor="ch-tg-proxy">{t('alerts.notify.proxy')}</label>
+                              <input
+                                id="ch-tg-proxy"
+                                type="text"
+                                value={channelDraft.proxy}
+                                onChange={(e) => setChannelDraft({ ...channelDraft, proxy: e.target.value })}
+                                placeholder={t('alerts.notify.proxyPlaceholder')}
+                              />
+                            </div>
+                          </div>
                           <div className="field">
-                            <label htmlFor="ch-tg-chat">{t('alerts.notify.chatId')}</label>
+                            <label htmlFor="ch-tg-base">{t('alerts.notify.apiBase')}</label>
                             <input
-                              id="ch-tg-chat"
+                              id="ch-tg-base"
                               type="text"
-                              required
-                              value={channelDraft.chatId}
-                              onChange={(e) => setChannelDraft({ ...channelDraft, chatId: e.target.value })}
-                              placeholder={t('alerts.notify.chatIdPlaceholder')}
+                              value={channelDraft.apiBase}
+                              onChange={(e) => setChannelDraft({ ...channelDraft, apiBase: e.target.value })}
                             />
+                            <p className="field-hint">{t('alerts.notify.apiBaseHint')}</p>
                           </div>
-                          <div className="field">
-                            <label htmlFor="ch-tg-thread">{t('alerts.notify.threadId')}</label>
-                            <input
-                              id="ch-tg-thread"
-                              type="number"
-                              min={1}
-                              value={channelDraft.threadId}
-                              onChange={(e) => setChannelDraft({ ...channelDraft, threadId: e.target.value })}
-                            />
-                          </div>
-                        </div>
-                        <div className="field">
-                          <label htmlFor="ch-tg-base">{t('alerts.notify.apiBase')}</label>
-                          <input
-                            id="ch-tg-base"
-                            type="text"
-                            value={channelDraft.apiBase}
-                            onChange={(e) => setChannelDraft({ ...channelDraft, apiBase: e.target.value })}
-                          />
-                          <p className="field-hint">{t('alerts.notify.apiBaseHint')}</p>
-                        </div>
-                        <div className="field">
-                          <label htmlFor="ch-tg-proxy">{t('alerts.notify.proxy')}</label>
-                          <input
-                            id="ch-tg-proxy"
-                            type="text"
-                            value={channelDraft.proxy}
-                            onChange={(e) => setChannelDraft({ ...channelDraft, proxy: e.target.value })}
-                            placeholder={t('alerts.notify.proxyPlaceholder')}
-                          />
-                        </div>
+                        </details>
                       </>
                     ) : (
                       <>
@@ -740,67 +762,6 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                             value={channelDraft.url}
                             onChange={(e) => setChannelDraft({ ...channelDraft, url: e.target.value })}
                             placeholder={t('alerts.notify.webhookUrlPlaceholder')}
-                          />
-                        </div>
-                        <div className="notify-grid-2">
-                          <div className="field">
-                            <label htmlFor="ch-wh-bearer">{t('alerts.notify.bearerToken')}</label>
-                            <input
-                              id="ch-wh-bearer"
-                              type="password"
-                              autoComplete="off"
-                              value={channelDraft.bearerToken}
-                              onChange={(e) =>
-                                setChannelDraft({
-                                  ...channelDraft,
-                                  bearerToken: e.target.value,
-                                  clearBearerToken: false,
-                                })
-                              }
-                              placeholder={
-                                channelDraft.hasBearerToken
-                                  ? t('alerts.notify.bearerTokenKeepPlaceholder', {
-                                      preview: channelDraft.bearerTokenPreview || '••••',
-                                    })
-                                  : ''
-                              }
-                            />
-                            {channelDraft.hasBearerToken && (
-                              <label className="checkbox-row notify-inline-check">
-                                <input
-                                  type="checkbox"
-                                  checked={channelDraft.clearBearerToken}
-                                  onChange={(e) =>
-                                    setChannelDraft({
-                                      ...channelDraft,
-                                      clearBearerToken: e.target.checked,
-                                      bearerToken: e.target.checked ? '' : channelDraft.bearerToken,
-                                    })
-                                  }
-                                />
-                                <span>{t('alerts.notify.clearBearerToken')}</span>
-                              </label>
-                            )}
-                          </div>
-                          <div className="field">
-                            <label htmlFor="ch-wh-proxy">{t('alerts.notify.proxy')}</label>
-                            <input
-                              id="ch-wh-proxy"
-                              type="text"
-                              value={channelDraft.proxy}
-                              onChange={(e) => setChannelDraft({ ...channelDraft, proxy: e.target.value })}
-                              placeholder={t('alerts.notify.proxyPlaceholder')}
-                            />
-                          </div>
-                        </div>
-                        <div className="field">
-                          <label htmlFor="ch-wh-headers">{t('alerts.notify.customHeaders')}</label>
-                          <textarea
-                            id="ch-wh-headers"
-                            rows={2}
-                            value={channelDraft.headersText}
-                            onChange={(e) => setChannelDraft({ ...channelDraft, headersText: e.target.value })}
-                            placeholder={t('alerts.notify.customHeadersPlaceholder')}
                           />
                         </div>
                         <div className="field">
@@ -828,6 +789,78 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                           />
                           <p className="field-hint">{t('alerts.notify.payloadTemplateHint')}</p>
                         </div>
+                        <details
+                          className="notify-advanced"
+                          open={Boolean(
+                            channelDraft.hasBearerToken ||
+                              channelDraft.bearerToken ||
+                              channelDraft.proxy ||
+                              channelDraft.headersText,
+                          )}
+                        >
+                          <summary>{t('alerts.notify.advancedNetwork')}</summary>
+                          <div className="notify-grid-2">
+                            <div className="field">
+                              <label htmlFor="ch-wh-bearer">{t('alerts.notify.bearerToken')}</label>
+                              <input
+                                id="ch-wh-bearer"
+                                type="password"
+                                autoComplete="off"
+                                value={channelDraft.bearerToken}
+                                onChange={(e) =>
+                                  setChannelDraft({
+                                    ...channelDraft,
+                                    bearerToken: e.target.value,
+                                    clearBearerToken: false,
+                                  })
+                                }
+                                placeholder={
+                                  channelDraft.hasBearerToken
+                                    ? t('alerts.notify.bearerTokenKeepPlaceholder', {
+                                        preview: channelDraft.bearerTokenPreview || '••••',
+                                      })
+                                    : ''
+                                }
+                              />
+                              {channelDraft.hasBearerToken && (
+                                <label className="checkbox-row notify-inline-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={channelDraft.clearBearerToken}
+                                    onChange={(e) =>
+                                      setChannelDraft({
+                                        ...channelDraft,
+                                        clearBearerToken: e.target.checked,
+                                        bearerToken: e.target.checked ? '' : channelDraft.bearerToken,
+                                      })
+                                    }
+                                  />
+                                  <span>{t('alerts.notify.clearBearerToken')}</span>
+                                </label>
+                              )}
+                            </div>
+                            <div className="field">
+                              <label htmlFor="ch-wh-proxy">{t('alerts.notify.proxy')}</label>
+                              <input
+                                id="ch-wh-proxy"
+                                type="text"
+                                value={channelDraft.proxy}
+                                onChange={(e) => setChannelDraft({ ...channelDraft, proxy: e.target.value })}
+                                placeholder={t('alerts.notify.proxyPlaceholder')}
+                              />
+                            </div>
+                          </div>
+                          <div className="field">
+                            <label htmlFor="ch-wh-headers">{t('alerts.notify.customHeaders')}</label>
+                            <textarea
+                              id="ch-wh-headers"
+                              rows={2}
+                              value={channelDraft.headersText}
+                              onChange={(e) => setChannelDraft({ ...channelDraft, headersText: e.target.value })}
+                              placeholder={t('alerts.notify.customHeadersPlaceholder')}
+                            />
+                          </div>
+                        </details>
                       </>
                     )}
 
@@ -933,7 +966,7 @@ export function AlertNotifyModal({ open, onClose }: { open: boolean; onClose: ()
                           </button>
                           <button
                             type="button"
-                            className="btn btn-sm btn-danger btn-icon"
+                            className="btn btn-sm btn-danger-ghost btn-icon"
                             title={t('common.delete')}
                             aria-label={t('common.delete')}
                             onClick={() => setConfirmDelete(ch)}

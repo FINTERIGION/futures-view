@@ -28,8 +28,8 @@ cd webui && npm run dev                    # Vite dev server on :5173 (proxies /
 
 | Area | Capabilities |
 | --- | --- |
-| **Product Sidebar** | View product data coverage (fresh / stale / empty), select charted product, toggle backtest universe checkboxes, trigger per-product or full data sync, add/edit product specs (`datafeed/products.json`) with roll-contract preview chart. |
-| **Main Chart** | OI-weighted daily candlesticks, roll markers, up to 4 stacked sub-pane indicators, and active backtest fills & run-window overlay. |
+| **Product Sidebar** | View product data coverage (fresh / stale / empty), select charted product, toggle backtest universe checkboxes, trigger per-product or full data sync, add/edit product specs (`datafeed/products.json`). |
+| **Main Chart** | Daily candlesticks across contract series (`weighted` OI-weighted continuous, `main` roll-calendar continuous, or `m01`–`m12` month continuous), latest daily HUD, roll markers, up to 4 stacked sub-pane indicators, and active backtest fills & run-window overlay. |
 | **Indicators Picker** | Toggle discovered indicators, hot-reload `indicators/`, and edit tunable `space` parameters in place (persisted in browser `localStorage` under `ft.indicatorParams`). |
 | **Signals Tab** | Save strategy configurations in SQLite (`results/webpanel.db`) and compute last-bar signal snapshots (`core.alert.run_alert_snapshot`): holding side, pending action, entry/last reference price, stop, and take-profit per product. Toggle per-row inclusion in scheduled push. |
 | **Alert Notifications Modal** | Opened from the top-right bell button (centered floating dialog alongside Web Access and Keyboard Shortcuts). Configure global weekday reminder time(s), Telegram Bot (with optional reverse-proxy API base & proxy) or Generic JSON Webhook channels, trigger manual update & push, and inspect delivery history. |
@@ -54,11 +54,11 @@ cd webui && npm run dev                    # Vite dev server on :5173 (proxies /
 | `/api/auth/{status,login,logout,password}` | `GET, POST, PUT` | Optional access password and `fv_session` cookie management |
 | `/api/meta/exchanges` | `GET` | Supported exchange codes and default roll rules |
 | `/api/products`, `/api/products/{code}` | `GET, POST, PUT, DELETE` | Product registry CRUD (`datafeed/products.json`) |
-| `/api/products/{code}/{bars,roll}` | `GET` | Weighted OHLCV bars and roll calendar map |
+| `/api/products/{code}/{bars,roll}` | `GET` | Daily OHLCV bars (`?series=weighted\|main\|m01..m12`) and roll calendar map |
 | `/api/data/{coverage,update}` | `GET, POST` | On-disk CSV coverage and background data download jobs |
 | `/api/strategies`, `/api/strategies/{key}`, `/api/strategies/reload` | `GET, POST` | Strategy catalog, single-strategy metadata, parameter spaces, and module hot-reload |
 | `/api/indicators`, `/api/indicators/{key}`, `/api/indicators/reload` | `GET, POST` | Indicator catalog, single-indicator metadata, and module hot-reload |
-| `/api/products/{code}/indicators/{key}` | `GET` | Standalone indicator calculation (`?p=name=value`) |
+| `/api/products/{code}/indicators/{key}` | `GET` | Standalone indicator calculation (`?series=weighted\|main\|m01..m12&p=name=value`) |
 | `/api/backtest` | `POST` | Start background backtest job |
 | `/api/alerts/preview` | `POST` | Compute last-bar signal snapshot (optionally persisting onto a saved monitor) |
 | `/api/alerts/monitors`, `/api/alerts/monitors/{id}` | `GET, POST, PUT, DELETE` | Persistent signal monitor configurations (plus `POST /import` for legacy browser entries) |

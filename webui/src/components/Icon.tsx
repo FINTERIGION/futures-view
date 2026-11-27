@@ -42,6 +42,10 @@ export type IconName =
   | 'bell-off'
   | 'send'
   | 'clock'
+  | 'maximize'
+  | 'minimize'
+  | 'target'
+  | 'arrow-up-right'
 
 /** Path data only -- every icon shares the viewBox, stroke and cap settings
  * set on the <svg> below, which is what keeps the set looking like a set. */
@@ -74,6 +78,10 @@ const PATHS: Record<IconName, string> = {
   'bell-off': 'M2.2 2.2 13.8 13.8M5.2 4.6A4 4 0 0 1 12 7v2.4M4 7.4v3.2L2.6 12h7.6M6.6 13.4a1.6 1.6 0 0 0 2.8 0',
   send: 'M14 2 7.2 8.8M14 2 9.6 14 7.2 8.8 2 6.4 14 2',
   clock: 'M8 2.2a5.8 5.8 0 1 0 0 11.6A5.8 5.8 0 0 0 8 2.2M8 4.8V8l2.4 1.6',
+  maximize: 'M2.8 6.4V2.8h3.6M13.2 6.4V2.8H9.6M2.8 9.6v3.6h3.6M13.2 9.6v3.6H9.6',
+  minimize: 'M6.4 2.8v3.6H2.8M9.6 2.8v3.6h3.6M6.4 13.2V9.6H2.8M9.6 13.2V9.6h3.6',
+  target: 'M8 2.2a5.8 5.8 0 1 0 0 11.6A5.8 5.8 0 0 0 8 2.2M8 5.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2M8 1v2M8 13v2M1 8h2M13 8h2',
+  'arrow-up-right': 'M4.5 11.5 11.5 4.5M6 4.5h5.5V10',
 }
 
 export function Icon({

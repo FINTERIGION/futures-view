@@ -1,15 +1,28 @@
 import { createContext, useContext } from 'react'
+import type { BarSeries } from '../api/types'
 
 export type DrawerTab = 'alerts' | 'backtest' | 'runs'
 
 export interface BacktestPrefill {
   strategy: string
   symbols?: string[]
-  start: string
-  end: string
-  cash: number
-  slippage: number
+  start?: string
+  end?: string
+  cash?: number
+  slippage?: number
   params: Record<string, unknown>
+}
+
+export interface AlertPrefill {
+  strategy: string
+  symbols: string[]
+  params: Record<string, unknown>
+}
+
+export interface ChartFocusRange {
+  symbol: string
+  startDate: string
+  endDate: string
 }
 
 export interface Sequenced<T> {
@@ -20,6 +33,12 @@ export interface Sequenced<T> {
 export interface WorkspaceState {
   chartSymbol: string
   setChartSymbol: (symbol: string) => void
+
+  chartSeries: BarSeries
+  setChartSeries: (series: BarSeries) => void
+
+  chartFocus: Sequenced<ChartFocusRange> | null
+  focusChartRange: (range: ChartFocusRange) => void
 
   universe: string[]
   setUniverse: (symbols: string[] | ((prev: string[]) => string[])) => void
@@ -32,6 +51,8 @@ export interface WorkspaceState {
   setDrawerTab: (tab: DrawerTab) => void
   drawerCollapsed: boolean
   setDrawerCollapsed: (v: boolean) => void
+  drawerMaximized: boolean
+  setDrawerMaximized: (v: boolean) => void
   drawerHeight: number
   setDrawerHeight: (h: number) => void
 
@@ -43,6 +64,7 @@ export interface WorkspaceState {
 
   indicators: string[]
   toggleIndicator: (key: string) => void
+  clearIndicators: () => void
 
   indicatorParams: Record<string, Record<string, unknown>>
   setIndicatorParams: (key: string, overrides: Record<string, unknown>) => void
@@ -52,6 +74,9 @@ export interface WorkspaceState {
 
   backtestPrefill: Sequenced<BacktestPrefill> | null
   prefillBacktest: (value: BacktestPrefill, runId?: string) => void
+
+  alertPrefill: Sequenced<AlertPrefill> | null
+  prefillAlert: (value: AlertPrefill) => void
 }
 
 export const WorkspaceContext = createContext<WorkspaceState | null>(null)

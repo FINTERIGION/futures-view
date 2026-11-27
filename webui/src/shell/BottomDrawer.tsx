@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from '../components/Icon'
 import type { TabItem } from '../components/Tabs'
@@ -8,20 +9,23 @@ import { HistoryPanel } from '../panels/HistoryPanel'
 import { useDrawerResize } from './useDrawerResize'
 import { useWorkspace, type DrawerTab } from './workspaceStore'
 
-/**
- * Not a variant of `components/Drawer` -- that one is a modal, right-side
- * portal with a backdrop, and the bottom drawer must never be modal: the
- * chart above it stays interactive (zoomable, hoverable) while this is
- * open. Alert, Backtest and History are tabs here rather than routes, so switching
- * between them no longer costs whatever the previous tab's page held in
- * state -- notably a live job's SSE stream, now held one level up in
- * `JobsProvider` instead of inside whichever panel started it.
- */
 export function BottomDrawer() {
   const { t } = useTranslation()
-  const { drawerTab, setDrawerTab, drawerCollapsed, setDrawerCollapsed, drawerHeight, setDrawerHeight, backtestPrefill } =
-    useWorkspace()
-  const { onPointerDown, onHandleKeyDown } = useDrawerResize(drawerHeight, setDrawerHeight)
+  const {
+    drawerTab,
+    setDrawerTab,
+    drawerCollapsed,
+    setDrawerCollapsed,
+    drawerMaximized,
+    setDrawerMaximized,
+    drawerHeight,
+    setDrawerHeight,
+    backtestPrefill,
+  } = useWorkspace()
+  const { onPointerDown, onHandleKeyDown } = useDrawerResize(drawerHeight, (next) => {
+    if (drawerMaximized) setDrawerMaximized(false)
+    setDrawerHeight(next)
+  })
 
   const tabs: TabItem[] = [
     { key: 'backtest', label: t('workspace.tabBacktest') },
@@ -34,24 +38,27 @@ export function BottomDrawer() {
     if (drawerCollapsed) setDrawerCollapsed(false)
   }
 
-  // The toggle button stays in the exact same slot (far right of this row)
-  // whether collapsed or not, and just flips via CSS rotation -- so
-  // collapsing and expanding read as one reversible action, not two
-  // differently-placed controls.
+  const onTabbarDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    setDrawerCollapsed(!drawerCollapsed)
+  }
+
   if (drawerCollapsed) {
     return (
       <div className="bdrawer bdrawer-collapsed">
-        <div className="bdrawer-tabbar">
+        <div className="bdrawer-tabbar" onDoubleClick={onTabbarDoubleClick}>
           <Tabs items={tabs} active={drawerTab} onChange={selectTab} />
           <div className="spacer" />
-          <button
-            className="btn btn-sm btn-ghost btn-icon bdrawer-toggle is-collapsed"
-            onClick={() => setDrawerCollapsed(false)}
-            title={t('workspace.expandDrawer')}
-            aria-label={t('workspace.expandDrawer')}
-          >
-            <Icon name="chevron-down" />
-          </button>
+          <div className="bdrawer-controls">
+            <button
+              className="btn btn-sm btn-ghost btn-icon bdrawer-toggle is-collapsed"
+              onClick={() => setDrawerCollapsed(false)}
+              title={t('workspace.expandDrawer')}
+              aria-label={t('workspace.expandDrawer')}
+            >
+              <Icon name="chevron-down" size={15} />
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -59,9 +66,6 @@ export function BottomDrawer() {
 
   return (
     <div className="bdrawer" style={{ height: 'var(--drawer-h)' }}>
-      {/* A real button, not a bare div: the drag target is also the only way
-          to resize this from a keyboard, and arrow keys on it move the edge
-          the same way the pointer does. */}
       <button
         type="button"
         className="bdrawer-handle"
@@ -73,22 +77,31 @@ export function BottomDrawer() {
         aria-orientation="horizontal"
         aria-valuenow={Math.round(drawerHeight)}
       />
-      <div className="bdrawer-tabbar">
+      <div className="bdrawer-tabbar" onDoubleClick={onTabbarDoubleClick}>
         <Tabs items={tabs} active={drawerTab} onChange={selectTab} />
         <div className="spacer" />
-        <button
-          className="btn btn-sm btn-ghost btn-icon bdrawer-toggle"
-          onClick={() => setDrawerCollapsed(true)}
-          title={t('workspace.collapseDrawer')}
-          aria-label={t('workspace.collapseDrawer')}
-        >
-          <Icon name="chevron-down" />
-        </button>
+        <div className="bdrawer-controls">
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost btn-icon"
+            onClick={() => setDrawerMaximized(!drawerMaximized)}
+            title={drawerMaximized ? t('workspace.restoreDrawer') : t('workspace.maximizeDrawer')}
+            aria-label={drawerMaximized ? t('workspace.restoreDrawer') : t('workspace.maximizeDrawer')}
+          >
+            <Icon name={drawerMaximized ? 'minimize' : 'maximize'} size={14} />
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost btn-icon bdrawer-toggle"
+            onClick={() => setDrawerCollapsed(true)}
+            title={t('workspace.collapseDrawer')}
+            aria-label={t('workspace.collapseDrawer')}
+          >
+            <Icon name="chevron-down" size={15} />
+          </button>
+        </div>
       </div>
-      <div className="bdrawer-body">
-        {/* Remounted (`key={seq}`) whenever a new prefill arrives -- see
-            BacktestPanel's own doc comment for why that has to be a remount
-            rather than a prop change an effect reacts to. */}
+      <div className={`bdrawer-body${drawerTab === 'backtest' ? ' is-split' : ''}`}>
         {drawerTab === 'backtest' && <BacktestPanel key={backtestPrefill?.seq ?? 0} prefill={backtestPrefill?.value} />}
         {drawerTab === 'alerts' && <AlertPanel />}
         {drawerTab === 'runs' && <HistoryPanel />}

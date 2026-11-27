@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorMessage } from '../api/client'
 import { dataApi, productsApi } from '../api/endpoints'
+import type { Product } from '../api/types'
 import { Icon } from '../components/Icon'
 import { JobProgress } from '../components/JobProgress'
 import { useToast } from '../components/toastStore'
@@ -10,9 +11,12 @@ import { useJobLifecycle, useJobSlot } from './jobsStore'
 import { ProductRow } from './ProductRow'
 import { useWorkspace } from './workspaceStore'
 
-/** Placeholder rows, shaped like the real ones, for the first load. An empty
- * panel that suddenly fills is harder to read than one that was already the
- * right shape. */
+type SidebarFilter = 'all' | 'universe' | 'needsUpdate'
+
+function needsDataUpdate(p: Product): boolean {
+  return !p.coverage.has_data || p.coverage.stale_keys.length > 0
+}
+
 function SidebarSkeleton() {
   return (
     <div aria-hidden="true">
@@ -26,20 +30,6 @@ function SidebarSkeleton() {
   )
 }
 
-/**
- * The right-hand product panel: search + list (click to chart, a checkbox
- * for the backtest universe, coverage badges, per-row download/edit)
- * on top, bulk data download at the bottom. This absorbs what used to be the
- * standalone Products and Data pages -- coverage comes straight off
- * `Product.coverage` (no separate `/data/coverage` fetch), and "Update
- * Selected" acts on the backtest universe.
- *
- * The search box is also the list's keyboard: ↑/↓ move a highlight through
- * the filtered rows and Enter charts the highlighted one, so finding a
- * product and opening it never needs the mouse. That is why the highlight
- * (`activeCode`) is a third state alongside charted and universe membership
- * -- it marks where Enter would land, and selects nothing by itself.
- */
 export function SymbolSidebar() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -47,6 +37,7 @@ export function SymbolSidebar() {
   const job = useJobSlot('data')
   const lifecycle = useJobLifecycle()
   const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<SidebarFilter>('all')
   const [activeCode, setActiveCode] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -55,19 +46,12 @@ export function SymbolSidebar() {
 
   const { data: products, isLoading } = useQuery({ queryKey: ['products'], queryFn: productsApi.list })
 
-  // Seed the chart with a product that actually has data downloaded, once,
-  // the first time the catalog loads with nothing picked yet -- the same
-  // rule the old BacktestPage used to seed its universe with. Exactly once,
-  // so it doesn't fight a symbol the user has already chosen.
   useEffect(() => {
     if (chartSymbol || !products || products.length === 0) return
     const withData = products.filter((p) => p.coverage.has_data)
     setChartSymbol((withData[0] ?? products[0]).code)
   }, [chartSymbol, products, setChartSymbol])
 
-  // Shares `lifecycle.announced` with `ChartWorkspace` so collapsing and
-  // reopening the sidebar neither misses an update nor duplicates its toast or
-  // refetches.
   useEffect(() => {
     const state = job.state
     if (!state || !['done', 'error', 'cancelled'].includes(state.status)) return
@@ -82,9 +66,6 @@ export function SymbolSidebar() {
   }, [job.state, lifecycle, queryClient, toast, t])
 
   const runUpdate = async (symbols: string[]) => {
-    // This request really can be refused, and used to be refused in
-    // silence: the backend claims each symbol in `_inflight` and answers 409
-    // while a download of it is already running (web/routers/data.py).
     setUpdateError(null)
     try {
       const { job_id } = await dataApi.update(symbols, false, false)
@@ -94,15 +75,22 @@ export function SymbolSidebar() {
     }
   }
 
-  const filtered = (products ?? []).filter((p) => {
+  const allProducts = products ?? []
+  const staleCount = allProducts.filter(needsDataUpdate).length
+
+  const filtered = allProducts.filter((p) => {
+    if (filter === 'universe' && !universe.includes(p.code)) return false
+    if (filter === 'needsUpdate' && !needsDataUpdate(p)) return false
     if (!query) return true
     const q = query.toLowerCase()
-    return p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.name_zh.includes(query)
+    return (
+      p.code.toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      p.name_zh.includes(query) ||
+      p.exchange.toLowerCase().includes(q)
+    )
   })
 
-  // The highlight is derived, not stored: a filter change can strip the row
-  // it pointed at, and a dangling `activeCode` would leave Enter charting
-  // something no longer on screen.
   const active = filtered.some((p) => p.code === activeCode) ? activeCode : (filtered[0]?.code ?? null)
 
   const chartProduct = (code: string) => {
@@ -119,15 +107,29 @@ export function SymbolSidebar() {
       setActiveCode(filtered[next].code)
       document.getElementById(`product-row-${filtered[next].code}`)?.scrollIntoView({ block: 'nearest' })
     } else if (e.key === 'Enter' && active) {
-      chartProduct(active)
+      if (e.shiftKey) {
+        e.preventDefault()
+        toggleUniverse(active)
+      } else {
+        chartProduct(active)
+      }
     } else if (e.key === 'Escape') {
-      // First press clears the filter, second gives the keyboard back to the
-      // chart -- Escape on an already-empty box that did nothing would read
-      // as a dead key. The workspace also closes a narrow overlay on Escape,
-      // so keep this more local interaction from bubbling up to it.
       e.stopPropagation()
       if (query) setQuery('')
       else searchRef.current?.blur()
+    }
+  }
+
+  const hasSubFilter = Boolean(query) || filter !== 'all'
+  const targetProducts = hasSubFilter ? filtered : allProducts
+  const allTargetSelected =
+    targetProducts.length === 0 || targetProducts.every((p) => universe.includes(p.code))
+  const handleSelectAll = () => {
+    if (targetProducts.length === 0) return
+    if (hasSubFilter) {
+      setUniverse((prev) => Array.from(new Set([...prev, ...filtered.map((p) => p.code)])))
+    } else {
+      setUniverse(allProducts.map((p) => p.code))
     }
   }
 
@@ -136,12 +138,10 @@ export function SymbolSidebar() {
       <div className="sidebar-header">
         <div className="search">
           <span className="search-icon">
-            <Icon name="search" size={14} />
+            <Icon name="search" size={13} />
           </span>
           <input
             ref={searchRef}
-            // Read by the workspace's `/` shortcut, which has to find this
-            // input across subtrees -- see ChartWorkspace.focusProductSearch.
             data-product-search
             className="sidebar-search"
             placeholder={t('workspace.searchProducts')}
@@ -152,7 +152,7 @@ export function SymbolSidebar() {
           />
           {query ? (
             <button className="search-clear" onClick={() => setQuery('')} aria-label={t('common.clear')}>
-              <Icon name="close" size={12} />
+              <Icon name="close" size={11} />
             </button>
           ) : (
             <kbd className="kbd search-hint" aria-hidden="true">
@@ -161,12 +161,12 @@ export function SymbolSidebar() {
           )}
         </div>
         <button
-          className="btn btn-sm btn-icon"
+          className="btn btn-sm btn-ghost btn-icon"
           onClick={() => setEditingProduct('new')}
           title={t('products.addProduct')}
           aria-label={t('products.addProduct')}
         >
-          <Icon name="plus" />
+          <Icon name="plus" size={14} />
         </button>
         <button
           className="btn btn-sm btn-ghost btn-icon"
@@ -174,52 +174,63 @@ export function SymbolSidebar() {
           title={t('workspace.collapseSidebar')}
           aria-label={t('workspace.collapseSidebar')}
         >
-          <Icon name="panel" />
+          <Icon name="panel" size={14} />
         </button>
       </div>
 
-      {/* What the list is currently showing, and how wide the next backtest
-          is. Both were previously only countable by eye. */}
-      {(() => {
-        const targetProducts = query ? filtered : (products ?? [])
-        const allTargetSelected =
-          targetProducts.length === 0 || targetProducts.every((p) => universe.includes(p.code))
-        const handleSelectAll = () => {
-          if (targetProducts.length === 0) return
-          if (query) {
-            setUniverse((prev) => Array.from(new Set([...prev, ...filtered.map((p) => p.code)])))
-          } else {
-            setUniverse((products ?? []).map((p) => p.code))
-          }
-        }
-        return (
-          <div className="sidebar-meta">
-            <span>{t('workspace.productCount', { count: filtered.length })}</span>
-            <div className="spacer" />
-            <span>{t('workspace.universeCount', { count: universe.length })}</span>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost sidebar-action"
-              disabled={allTargetSelected}
-              onClick={handleSelectAll}
-              title={t('common.selectAll')}
-              aria-label={t('common.selectAll')}
-            >
-              {t('common.selectAll')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost sidebar-clear"
-              disabled={universe.length === 0}
-              onClick={() => setUniverse([])}
-              title={t('common.clear')}
-              aria-label={t('common.clear')}
-            >
-              {t('common.clear')}
-            </button>
-          </div>
-        )
-      })()}
+      <div className="sidebar-filters" role="group" aria-label={t('workspace.filterProducts')}>
+        <button
+          type="button"
+          className={`sidebar-filter-btn ${filter === 'all' ? 'active' : ''}`}
+          aria-pressed={filter === 'all'}
+          onClick={() => setFilter('all')}
+        >
+          {t('workspace.filterAll')}
+        </button>
+        <button
+          type="button"
+          className={`sidebar-filter-btn ${filter === 'universe' ? 'active' : ''}`}
+          aria-pressed={filter === 'universe'}
+          onClick={() => setFilter('universe')}
+        >
+          {t('workspace.filterSelected')} ({universe.length})
+        </button>
+        {staleCount > 0 && (
+          <button
+            type="button"
+            className={`sidebar-filter-btn ${filter === 'needsUpdate' ? 'active' : ''}`}
+            aria-pressed={filter === 'needsUpdate'}
+            onClick={() => setFilter('needsUpdate')}
+          >
+            <span className="sidebar-filter-warn">{t('workspace.filterNeedsUpdate')}</span> ({staleCount})
+          </button>
+        )}
+      </div>
+
+      <div className="sidebar-meta">
+        <span>{t('workspace.productCount', { count: filtered.length })}</span>
+        <div className="spacer" />
+        <button
+          type="button"
+          className="btn btn-xs btn-ghost sidebar-action"
+          disabled={allTargetSelected}
+          onClick={handleSelectAll}
+          title={t('common.selectAll')}
+          aria-label={t('common.selectAll')}
+        >
+          {t('common.selectAll')}
+        </button>
+        <button
+          type="button"
+          className="btn btn-xs btn-ghost sidebar-clear"
+          disabled={universe.length === 0}
+          onClick={() => setUniverse([])}
+          title={t('common.clear')}
+          aria-label={t('common.clear')}
+        >
+          {t('common.clear')}
+        </button>
+      </div>
 
       <div className="sidebar-list" role="listbox" aria-activedescendant={active ? `product-row-${active}` : undefined}>
         {isLoading && <SidebarSkeleton />}
@@ -256,18 +267,18 @@ export function SymbolSidebar() {
         )}
         <div className="toolbar">
           <button
-            className="btn btn-sm btn-primary"
+            className="btn btn-sm"
             style={{ flex: 1 }}
             onClick={() => void runUpdate(universe)}
             disabled={universe.length === 0 || job.isActive}
           >
-            <Icon name="download" size={14} />
+            <Icon name="download" size={13} />
             {t('data.update')} ({universe.length})
           </button>
           <button
-            className="btn btn-sm"
-            onClick={() => void runUpdate((products ?? []).map((p) => p.code))}
-            disabled={job.isActive || !products?.length}
+            className="btn btn-sm btn-ghost"
+            onClick={() => void runUpdate(allProducts.map((p) => p.code))}
+            disabled={job.isActive || allProducts.length === 0}
           >
             {t('data.updateAll')}
           </button>

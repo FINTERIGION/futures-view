@@ -11,6 +11,7 @@ real contract keeps only the bars where it actually printed -- see
 
 import logging
 import os
+import re
 
 import pandas as pd
 
@@ -28,10 +29,34 @@ from .roll_calendar import (
     contract_feed_name,
     mapping_as_dates,
     normalize_contract_code,
+    roll_date,
 )
 
 _PRICE_COLS = ['open', 'high', 'low', 'close', 'settle']
 _ALIGN_COLS = ['open', 'high', 'low', 'close', 'settle', 'oi', 'volume']
+_MONTH_SERIES_RE = re.compile(r'^m(0[1-9]|1[0-2])$')
+
+
+def normalize_series_name(series: str | None) -> str:
+    """Validate and canonicalise a chart bar series selector.
+
+    Supported values:
+      * ``'weighted'`` -- OI-weighted continuous index (default)
+      * ``'main'``     -- calendar-roll main continuous contract
+      * ``'m01'``..``'m12'`` -- delivery-month continuous contract
+    """
+    if series is None:
+        return 'weighted'
+    text = str(series).strip().lower()
+    if not text or text == 'weighted':
+        return 'weighted'
+    if text == 'main':
+        return 'main'
+    if _MONTH_SERIES_RE.match(text):
+        return text
+    raise ValueError(
+        f"Unsupported series {series!r}; expected 'weighted', 'main', or 'm01'..'m12'"
+    )
 
 
 class DataManager:
@@ -190,6 +215,141 @@ class DataManager:
             )
 
         return df
+
+    @staticmethod
+    def _finalize_contract_series(
+        rows: pd.DataFrame,
+        symbol: str,
+        series: str,
+        start_date: str = None,
+        end_date: str = None,
+    ) -> pd.DataFrame:
+        if rows.empty:
+            raise ValueError(f"No contract bars available for {symbol} ({series})")
+        out = rows.copy()
+        out['date'] = pd.to_datetime(out['date']).dt.normalize()
+        out = out.sort_values('date').drop_duplicates(subset=['date'], keep='last')
+        out.set_index('date', inplace=True)
+        for col in _ALIGN_COLS:
+            if col not in out.columns:
+                out[col] = 0.0 if col in ('oi', 'volume') else float('nan')
+            else:
+                out[col] = pd.to_numeric(out[col], errors='coerce')
+        out['oi'] = out['oi'].fillna(0.0)
+        out['volume'] = out['volume'].fillna(0.0)
+        if 'settle' in out.columns:
+            bad_settle = out['settle'].isna() | (out['settle'] <= 0)
+            if bad_settle.any():
+                out.loc[bad_settle, 'settle'] = out.loc[bad_settle, 'close']
+        out = out[_ALIGN_COLS + ['contract']]
+
+        if start_date:
+            out = out[out.index >= pd.to_datetime(start_date)]
+        if end_date:
+            out = out[out.index <= pd.to_datetime(end_date)]
+        if out.empty:
+            raise ValueError(
+                f"Filtered data is empty for {symbol} ({series}). Check that the date range "
+                f"[{start_date}, {end_date}] falls within the available data."
+            )
+        return out
+
+    def load_series_dataframe(
+        self,
+        series: str = 'weighted',
+        start_date: str = None,
+        end_date: str = None,
+        symbol: str = None,
+    ) -> pd.DataFrame:
+        """Load a daily OHLCV frame for ``weighted``, ``main``, or ``m01``..``m12``.
+
+        ``weighted`` delegates directly to :meth:`load_dataframe`.
+        ``main`` builds the calendar-roll dominant continuous contract from
+        ``data/{symbol}.csv`` using the product's declared ``main_months`` and
+        ``roll_lead_months`` (matching the backtest execution roll calendar).
+        ``m01``..``m12`` builds a continuous series for a single delivery month,
+        rolling smoothly into next year's contract once the expiring contract
+        passes its roll date and next year's contract has started printing.
+        """
+        norm = normalize_series_name(series)
+        symbol = self._sym(symbol)
+        if norm == 'weighted':
+            return self.load_dataframe(start_date=start_date, end_date=end_date, symbol=symbol)
+
+        raw = annotate_expiries(
+            self._drop_priceless_rows(self.load_contracts_dataframe(symbol), symbol)
+        )
+        if raw.empty:
+            raise ValueError(f"No usable contract rows in data/{symbol}.csv")
+
+        rule = roll_rule(symbol)
+        lead = rule['lead_months']
+
+        if norm == 'main':
+            trading_index = pd.DatetimeIndex(sorted(raw['date'].unique()))
+            mapping = build_date_contract_map(
+                trading_index,
+                raw,
+                warn=False,
+                main_months=rule['main_months'],
+                lead_months=lead,
+            )
+            if not mapping:
+                raise ValueError(
+                    f"Roll calendar produced no main contracts for {symbol}. "
+                    f"Check data/{symbol}.csv coverage."
+                )
+            colliding = colliding_codes(raw, trading_index.min(), trading_index.max())
+            feed_names = [
+                contract_feed_name(code, expiry, colliding)
+                for code, expiry in zip(raw['contract'], raw['expiry'])
+            ]
+            keep = [
+                mapping.get(dt) == fname
+                for dt, fname in zip(raw['date'], feed_names)
+            ]
+            selected = raw.loc[keep]
+            return self._finalize_contract_series(
+                selected, symbol, norm, start_date=start_date, end_date=end_date,
+            )
+
+        target_month = int(norm[1:])
+        subset = raw[raw['expiry'].map(lambda e: e[1] == target_month)].copy()
+        if subset.empty:
+            raise ValueError(f"No contract data for {symbol} month {target_month:02d}")
+
+        dup_mask = subset.duplicated(subset=['date'], keep=False)
+        singles = subset.loc[~dup_mask]
+        overlaps = subset.loc[dup_mask]
+        if overlaps.empty:
+            selected = singles
+        else:
+            picked_indices = []
+            for dt, grp in overlaps.groupby('date', sort=False):
+                # Prefer the nearest expiry whose roll date has not yet arrived;
+                # if every overlapping contract is already past its roll date,
+                # pick the latest expiry (breaking ties by higher OI).
+                active_rows = []
+                fallback_rows = []
+                for idx, row in grp.iterrows():
+                    oi_val = pd.to_numeric(row.get('oi', 0), errors='coerce')
+                    oi_num = 0.0 if pd.isna(oi_val) else float(oi_val)
+                    exp = row['expiry']
+                    if roll_date(exp, lead) > dt:
+                        active_rows.append((exp, -oi_num, idx))
+                    else:
+                        fallback_rows.append((exp, oi_num, idx))
+                if active_rows:
+                    active_rows.sort()
+                    picked_indices.append(active_rows[0][2])
+                else:
+                    fallback_rows.sort(reverse=True)
+                    picked_indices.append(fallback_rows[0][2])
+            selected = pd.concat([singles, overlaps.loc[picked_indices]], axis=0)
+
+        return self._finalize_contract_series(
+            selected, symbol, norm, start_date=start_date, end_date=end_date,
+        )
 
     def load_contracts_dataframe(self, symbol: str = None) -> pd.DataFrame:
         """Load contract-level exchange history from ``data/{symbol}.csv``."""

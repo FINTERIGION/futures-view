@@ -7,6 +7,7 @@ import type {
   AlertSchedule,
   AlertScheduleInput,
   Bar,
+  BarSeries,
   Coverage,
   DeliveryResult,
   ExchangeMeta,
@@ -41,12 +42,15 @@ export const productsApi = {
   update: (code: string, body: ProductInput) => api.put<Product>(`/products/${seg(code)}`, body),
   remove: (code: string, purgeData: boolean) =>
     api.del<{ deleted: string; purged_files: string[] }>(`/products/${seg(code)}?purge_data=${purgeData}`),
-  bars: (code: string, start?: string, end?: string) => {
+  bars: (code: string, start?: string, end?: string, series?: BarSeries) => {
     const q = new URLSearchParams()
     if (start) q.set('start', start)
     if (end) q.set('end', end)
+    if (series && series !== 'weighted') q.set('series', series)
     const qs = q.toString()
-    return api.get<{ symbol: string; bars: Bar[] }>(`/products/${seg(code)}/bars${qs ? `?${qs}` : ''}`)
+    return api.get<{ symbol: string; series?: BarSeries; bars: Bar[] }>(
+      `/products/${seg(code)}/bars${qs ? `?${qs}` : ''}`,
+    )
   },
   roll: (code: string, start?: string, end?: string) => {
     const q = new URLSearchParams()
@@ -76,10 +80,18 @@ export const indicatorsApi = {
   get: (key: string) => api.get<IndicatorInfo>(`/indicators/${seg(key)}`),
   /** `params` goes out as the same `p=name=value` token the CLI's `--param`
    * uses. The picker's params editor sets it; see chart/indicatorParams.ts. */
-  values: (code: string, key: string, params?: Record<string, unknown>, start?: string, end?: string) => {
+  values: (
+    code: string,
+    key: string,
+    params?: Record<string, unknown>,
+    start?: string,
+    end?: string,
+    series?: BarSeries,
+  ) => {
     const q = new URLSearchParams()
     if (start) q.set('start', start)
     if (end) q.set('end', end)
+    if (series && series !== 'weighted') q.set('series', series)
     for (const [name, value] of Object.entries(params ?? {})) q.append('p', `${name}=${value}`)
     const qs = q.toString()
     return api.get<IndicatorValues>(`/products/${seg(code)}/indicators/${seg(key)}${qs ? `?${qs}` : ''}`)

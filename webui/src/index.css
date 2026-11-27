@@ -1,67 +1,57 @@
 /* ============================================================================
-   Design tokens.
+   Design tokens -- Modern Cool-Neutral Minimalism (Scheme A).
 
-   Two palettes, one for each colour scheme, plus scales for spacing, radius,
-   elevation, type and motion. Everything below this file -- components/ui.css
-   and shell/workspace.css -- is written in these tokens only, so the whole
-   panel re-skins from here.
+   Two palettes (Light & Dark), plus scales for spacing, radius, elevation,
+   type and motion. Every component and workspace stylesheet reads strictly
+   from these tokens so chrome and ECharts surfaces stay seamless.
 
-   The neutrals are the *warm* greys from theme/palette.ts (INK / CHART_SURFACE)
-   rather than a second, cooler set: the chart occupies the middle of the
-   screen and paints itself from those literals, so chrome mixed from a cool
-   grey ramp reads as a slightly different white right next to it.
-
-   Dark values are spelled out twice on purpose. Once under
-   `prefers-color-scheme` for "follow the OS", once under `[data-theme='dark']`
-   for the explicit choice the top bar's theme switch writes onto <html>.
-   Plain CSS has no way to share one declaration list between a media query and
-   a selector, and the alternative -- a second indirection layer of
-   --dark-* variables -- costs more than it saves. Edit both.
+   Dark values are declared both under `prefers-color-scheme: dark` (follow OS)
+   and under `:root[data-theme='dark']` (explicit toggle).
    ============================================================================ */
 
 :root {
   /* -- Surfaces & ink ----------------------------------------------------- */
-  --bg: #efeee9;
-  --surface: #fcfcfb;
-  --surface-2: #f5f4f0;
-  --surface-3: #eceae3;
-  --border: #e1e0d9;
-  --border-strong: #cdccc2;
-  --text: #16160f;
-  --text-muted: #52514e;
-  --text-faint: #898781;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #eef0f4;
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.15);
+  --text: #111318;
+  --text-muted: #525866;
+  --text-faint: #868c98;
 
-  /* -- Accent (categorical slot 1, so a selection matches series 1) ------- */
-  --accent: #2a78d6;
-  --accent-hover: #2069c2;
+  /* -- Accent ------------------------------------------------------------- */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-text: #2563eb;
   --accent-fg: #ffffff;
-  --accent-bg: rgba(42, 120, 214, 0.1);
-  --accent-bg-strong: rgba(42, 120, 214, 0.18);
-  --accent-ring: rgba(42, 120, 214, 0.32);
+  --accent-bg: rgba(37, 99, 235, 0.08);
+  --accent-bg-strong: rgba(37, 99, 235, 0.15);
+  --accent-border: rgba(37, 99, 235, 0.24);
+  --accent-ring: rgba(37, 99, 235, 0.26);
 
   /* -- Status ------------------------------------------------------------- */
-  --danger: #cc3a3a;
-  --danger-bg: rgba(204, 58, 58, 0.1);
-  --success: #0c8f3f;
-  --success-bg: rgba(12, 143, 63, 0.1);
-  --warning: #a9740a;
-  --warning-bg: rgba(250, 178, 25, 0.16);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.08);
+  --success: #0d9448;
+  --success-bg: rgba(13, 148, 72, 0.09);
+  --warning: #b45309;
+  --warning-bg: rgba(217, 119, 6, 0.12);
 
-  /* Market direction, Chinese convention -- red rose, green fell. Same pair
-     the candlesticks use (theme/palette.ts CANDLE), so chrome that speaks
-     about direction can agree with the chart. */
-  --up: #e34948;
-  --down: #1baf7a;
+  /* Market direction, Chinese convention -- red rose, green fell. */
+  --up: #e14948;
+  --down: #12a572;
 
   /* -- Elevation ---------------------------------------------------------- */
-  --shadow-sm: 0 1px 2px rgba(24, 22, 14, 0.06);
-  --shadow: 0 1px 2px rgba(24, 22, 14, 0.05), 0 2px 8px rgba(24, 22, 14, 0.06);
-  --shadow-lg: 0 2px 4px rgba(24, 22, 14, 0.06), 0 12px 32px rgba(24, 22, 14, 0.12);
-  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.08), 0 16px 36px rgba(15, 23, 42, 0.12);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.65);
 
   color-scheme: light;
 
-  /* -- Scales (scheme-independent) ---------------------------------------- */
+  /* -- Scales ------------------------------------------------------------- */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
@@ -69,8 +59,8 @@
   --sp-5: 24px;
   --sp-6: 32px;
 
-  --radius-sm: 5px;
-  --radius: 8px;
+  --radius-sm: 6px;
+  --radius: 9px;
   --radius-lg: 12px;
   --radius-pill: 999px;
 
@@ -78,17 +68,15 @@
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-base: 14px;
-  --fs-lg: 16px;
-  --fs-xl: 20px;
+  --fs-lg: 15px;
+  --fs-xl: 21px;
 
-  /* Control heights: every button, input and select in a row has to land on
-     the same baseline grid or a toolbar looks hand-assembled. */
   --h-sm: 26px;
-  --h-md: 32px;
+  --h-md: 30px;
 
   --dur-1: 110ms;
   --dur-2: 180ms;
-  --dur-3: 280ms;
+  --dur-3: 260ms;
   --ease: cubic-bezier(0.2, 0, 0.13, 1);
 
   --z-sticky: 20;
@@ -97,81 +85,85 @@
   --z-modal: 41;
   --z-toast: 60;
 
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #100f0e;
-    --surface: #1a1a19;
-    --surface-2: #232321;
-    --surface-3: #2c2c2a;
-    --border: #2c2c2a;
-    --border-strong: #3d3d39;
-    --text: #f3f2ec;
-    --text-muted: #b3b1a8;
-    --text-faint: #898781;
+    --bg: #0b0d10;
+    --surface: #111419;
+    --surface-2: #171b22;
+    --surface-3: #20252f;
+    --border: rgba(255, 255, 255, 0.075);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --text: #f0f2f5;
+    --text-muted: #98a2b3;
+    --text-faint: #667085;
 
-    --accent: #4a92ea;
-    --accent-hover: #63a2f0;
-    --accent-fg: #07131f;
-    --accent-bg: rgba(74, 146, 234, 0.16);
-    --accent-bg-strong: rgba(74, 146, 234, 0.26);
-    --accent-ring: rgba(74, 146, 234, 0.4);
+    --accent: #2f74ed;
+    --accent-hover: #4282f2;
+    --accent-text: #6ea8fe;
+    --accent-fg: #ffffff;
+    --accent-bg: rgba(59, 130, 246, 0.13);
+    --accent-bg-strong: rgba(59, 130, 246, 0.24);
+    --accent-border: rgba(96, 165, 250, 0.28);
+    --accent-ring: rgba(96, 165, 250, 0.34);
 
-    --danger: #ef6b6b;
-    --danger-bg: rgba(239, 107, 107, 0.15);
-    --success: #4cc77d;
-    --success-bg: rgba(76, 199, 125, 0.15);
+    --danger: #f06a6a;
+    --danger-bg: rgba(240, 106, 106, 0.13);
+    --success: #34c77b;
+    --success-bg: rgba(52, 199, 123, 0.13);
     --warning: #f0b429;
-    --warning-bg: rgba(240, 180, 41, 0.15);
+    --warning-bg: rgba(240, 180, 41, 0.14);
 
-    --up: #e66767;
-    --down: #199e70;
+    --up: #ef5b5b;
+    --down: #1db584;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.5);
-    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45), 0 20px 48px rgba(0, 0, 0, 0.5);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
     color-scheme: dark;
   }
 }
 
 :root[data-theme='dark'] {
-  --bg: #100f0e;
-  --surface: #1a1a19;
-  --surface-2: #232321;
-  --surface-3: #2c2c2a;
-  --border: #2c2c2a;
-  --border-strong: #3d3d39;
-  --text: #f3f2ec;
-  --text-muted: #b3b1a8;
-  --text-faint: #898781;
+  --bg: #0b0d10;
+  --surface: #111419;
+  --surface-2: #171b22;
+  --surface-3: #20252f;
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #f0f2f5;
+  --text-muted: #98a2b3;
+  --text-faint: #667085;
 
-  --accent: #4a92ea;
-  --accent-hover: #63a2f0;
-  --accent-fg: #07131f;
-  --accent-bg: rgba(74, 146, 234, 0.16);
-  --accent-bg-strong: rgba(74, 146, 234, 0.26);
-  --accent-ring: rgba(74, 146, 234, 0.4);
+  --accent: #2f74ed;
+  --accent-hover: #4282f2;
+  --accent-text: #6ea8fe;
+  --accent-fg: #ffffff;
+  --accent-bg: rgba(59, 130, 246, 0.13);
+  --accent-bg-strong: rgba(59, 130, 246, 0.24);
+  --accent-border: rgba(96, 165, 250, 0.28);
+  --accent-ring: rgba(96, 165, 250, 0.34);
 
-  --danger: #ef6b6b;
-  --danger-bg: rgba(239, 107, 107, 0.15);
-  --success: #4cc77d;
-  --success-bg: rgba(76, 199, 125, 0.15);
+  --danger: #f06a6a;
+  --danger-bg: rgba(240, 106, 106, 0.13);
+  --success: #34c77b;
+  --success-bg: rgba(52, 199, 123, 0.13);
   --warning: #f0b429;
-  --warning-bg: rgba(240, 180, 41, 0.15);
+  --warning-bg: rgba(240, 180, 41, 0.14);
 
-  --up: #e66767;
-  --down: #199e70;
+  --up: #ef5b5b;
+  --down: #1db584;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.5);
-  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45), 0 20px 48px rgba(0, 0, 0, 0.5);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
   color-scheme: dark;
 }
@@ -197,8 +189,6 @@ body {
   font: var(--fs-base) / 1.5 var(--font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* The workspace is a fixed frame with its own scrolling regions; letting the
-     page itself rubber-band drags the whole terminal around. */
   overscroll-behavior: none;
 }
 
@@ -214,12 +204,12 @@ h4 {
   margin: 0;
   font-weight: 600;
   color: var(--text);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 a {
-  color: var(--accent);
-  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-text);
+  text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
   text-underline-offset: 2px;
 }
 
@@ -231,12 +221,9 @@ textarea {
   color: inherit;
 }
 
-/* One focus treatment for the whole panel: a ring outside the control, never
-   an outline that crops against a neighbour. Keyboard only -- a mouse click
-   on a button should not leave it ringed. */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  box-shadow: 0 0 0 2.5px var(--accent-ring);
   border-radius: var(--radius-sm);
 }
 
@@ -254,16 +241,13 @@ pre {
   font-family: var(--mono);
 }
 
-/* Figures line up column-wise everywhere: metric tiles, tables, progress
-   readouts. Without this a value ticking 1.19 -> 1.21 visibly reflows. */
 .num,
 .dtable td,
-.stat-tile .value {
+.stat-tile .value,
+.kpi-value {
   font-variant-numeric: tabular-nums;
 }
 
-/* Visible to a screen reader, not to the eye -- for a control whose meaning
-   is carried by an icon alone. */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -277,8 +261,7 @@ pre {
 }
 
 /* ============================================================================
-   Scrollbars -- present but recessive, and only opaque where a region really
-   scrolls (the workspace has several nested ones).
+   Scrollbars
    ============================================================================ */
 
 * {
@@ -287,14 +270,14 @@ pre {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: var(--radius-pill);
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 
@@ -312,8 +295,7 @@ pre {
 }
 
 /* ============================================================================
-   Motion: every transition and animation in this panel is decorative -- state
-   is legible without any of it -- so all of it goes away on request.
+   Reduced motion
    ============================================================================ */
 
 @media (prefers-reduced-motion: reduce) {

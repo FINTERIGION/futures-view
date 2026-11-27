@@ -2,12 +2,12 @@ import { useTranslation } from 'react-i18next'
 import type { Product } from '../api/types'
 import { Icon } from '../components/Icon'
 
-/**
- * One row in the product sidebar. Clicking the row charts the product; the
- * independent checkbox controls backtest-universe membership. Chart view
- * and universe membership are independent: a product can be charted without
- * being in the universe, or checked into the universe without being charted.
- */
+function shortDate(iso: string | null): string {
+  if (!iso) return ''
+  // '2026-10-22' -> '10-22'
+  return iso.length >= 10 ? iso.slice(5, 10) : iso
+}
+
 export function ProductRow({
   product,
   isCharted,
@@ -22,8 +22,6 @@ export function ProductRow({
   product: Product
   isCharted: boolean
   inUniverse: boolean
-  /** Highlighted by the search box's arrow keys -- not a selection of its
-   * own, just where Enter would land. */
   isActive?: boolean
   onSetChart: () => void
   onToggleUniverse: () => void
@@ -39,7 +37,7 @@ export function ProductRow({
   const coverageState = !cov.has_data ? 'is-empty' : cov.stale_keys.length > 0 ? 'is-stale' : 'is-fresh'
   const coverageTitle = !cov.has_data
     ? t('products.noData')
-    : `${cov.stale_keys.length > 0 ? t('data.stale') : t('data.fresh')} · ${cov.n_rows} ${t('products.rows')}`
+    : `${cov.stale_keys.length > 0 ? t('data.stale') : t('data.fresh')} · ${cov.last_date ?? ''} · ${cov.n_rows} ${t('products.rows')}`
 
   return (
     <div
@@ -76,20 +74,16 @@ export function ProductRow({
           onChange={onToggleUniverse}
         />
         <span className="universe-box" aria-hidden="true">
-          <Icon name="check" size={11} />
+          <Icon name="check" size={10} />
         </span>
       </label>
       <span className="code">{product.code}</span>
       <span className="name">{name}</span>
-      {/* Three coverage states in a 300px row: a dot reads down the column at
-          a glance where three differently-sized word badges did not. The text
-          it replaced lives on in the title, alongside the row count that used
-          to be hidden there anyway. */}
-      <span className={`coverage-dot ${coverageState}`} title={coverageTitle} role="img" aria-label={coverageTitle} />
+      <span className="product-row-meta">
+        {cov.has_data && cov.last_date && <span className="product-row-date">{shortDate(cov.last_date)}</span>}
+        <span className={`coverage-dot ${coverageState}`} title={coverageTitle} role="img" aria-label={coverageTitle} />
+      </span>
       <div className="row-actions">
-        {/* Downloading one product used to mean checking it into the universe
-            first, then using the bulk button in the footer -- and unchecking
-            it afterwards. */}
         <button
           className="btn btn-sm btn-ghost btn-icon"
           title={t('data.updateOne', { code: product.code })}
@@ -100,7 +94,7 @@ export function ProductRow({
             onDownload()
           }}
         >
-          <Icon name="download" size={14} />
+          <Icon name="download" size={13} />
         </button>
         <button
           className="btn btn-sm btn-ghost btn-icon"
@@ -111,7 +105,7 @@ export function ProductRow({
             onEdit()
           }}
         >
-          <Icon name="pencil" size={14} />
+          <Icon name="pencil" size={13} />
         </button>
       </div>
     </div>

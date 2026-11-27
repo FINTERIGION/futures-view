@@ -1,15 +1,40 @@
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
-import { EChart } from '../components/EChart'
 import { MONTHS, type CommissionMode, type ProductFormHandle } from './useProductForm'
 
 export function ProductFormFields({ f }: { f: ProductFormHandle }) {
   const { t } = useTranslation()
   const idPrefix = useId()
+  const cov = f.coverage
+  const covStatus = !cov?.has_data ? 'is-empty' : cov.stale_keys.length > 0 ? 'is-stale' : 'is-fresh'
 
   return (
     <>
       {f.formError && <div className="hint-banner warning">{f.formError}</div>}
+
+      {f.isEdit && cov && (
+        <div className="product-coverage-strip">
+          <span className={`coverage-dot ${covStatus}`} aria-hidden="true" />
+          {cov.has_data ? (
+            <>
+              <span className="num">
+                {cov.first_date ?? '—'} → {cov.last_date ?? '—'}
+              </span>
+              <span className="product-coverage-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="num">
+                {cov.n_rows.toLocaleString()} {t('products.rows')}
+              </span>
+              <span className={`badge ${cov.stale_keys.length > 0 ? 'badge-warning' : 'badge-success'}`}>
+                {cov.stale_keys.length > 0 ? t('data.stale') : t('data.fresh')}
+              </span>
+            </>
+          ) : (
+            <span>{t('products.noData')}</span>
+          )}
+        </div>
+      )}
 
       {!f.isEdit && (
         <div className="field">
@@ -130,19 +155,6 @@ export function ProductFormFields({ f }: { f: ProductFormHandle }) {
           />
         </div>
       </div>
-
-      {f.isEdit && (
-        <div style={{ marginTop: 20 }}>
-          <h3 style={{ marginBottom: 10 }}>{t('products.priceChart')}</h3>
-          {f.chartOption ? (
-            <EChart option={f.chartOption} height={360} />
-          ) : (
-            <div className="empty-state">
-              {f.barsLoading ? t('common.loading') : t('products.noData')}
-            </div>
-          )}
-        </div>
-      )}
     </>
   )
 }

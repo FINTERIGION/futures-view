@@ -5,14 +5,8 @@ import type { ParamFieldErrors } from '../chart/indicatorParams'
 import { Icon } from '../components/Icon'
 import { StrategyParamFields } from './StrategyParamFields'
 
-/** Windows worth one click. A backtest is nearly always run over "the last
- * few years", and typing two ISO dates to say so was the most repeated
- * keystroke in this form. */
 const RANGE_PRESETS = [1, 3, 5, 10]
 
-/** `YYYY-MM-DD` of `d` on the user's own calendar. Not `toISOString()`, which
- * is the UTC date: east of Greenwich that is still yesterday for the first
- * hours of every day -- until 08:00 in Beijing. */
 function localIsoDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -25,9 +19,6 @@ function isoYearRange(years: number): { start: string; end: string } {
   return { start: localIsoDate(start), end: localIsoDate(end) }
 }
 
-/** The Backtest tab's run form: which strategy, that strategy's declared
- * parameters, the universe, and the run's own settings (window, cash,
- * slippage). */
 export function BacktestForm({
   strategies,
   strategyKey,
@@ -81,14 +72,12 @@ export function BacktestForm({
 }) {
   const { t } = useTranslation()
   const idPrefix = useId()
-  // Listed, not hidden: a strategy that vanished from the dropdown the moment
-  // its file stopped compiling left whoever saved it nowhere to read why.
   const broken = strategies.filter((s) => s.errors.length > 0)
   const strategy = strategies.find((s) => s.key === strategyKey)
+
   return (
     <div className="backtest-form">
       <section className="form-section">
-        <h3 className="form-section-title">{t('backtest.strategyAndParams')}</h3>
         <div className="field">
           <label htmlFor={`${idPrefix}-strategy`}>{t('common.strategy')}</label>
           <div className="field-row">
@@ -134,9 +123,9 @@ export function BacktestForm({
       </section>
 
       <section className="form-section">
-        <div className="field-label-row">
+        <div className="form-section-head">
           <h3 className="form-section-title">{`${t('common.symbols')} (${universe.length})`}</h3>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={onManageUniverse}>
+          <button type="button" className="btn btn-xs btn-ghost" onClick={onManageUniverse}>
             {t('workspace.manageProducts')}
           </button>
         </div>
@@ -154,18 +143,17 @@ export function BacktestForm({
                 onClick={() => onToggleUniverse(sym)}
               >
                 {sym}
-                <Icon name="close" size={11} />
+                <Icon name="close" size={10} />
               </button>
             ))
           )}
         </div>
-        <p className="field-hint">{t('workspace.universeFromSidebar')}</p>
       </section>
 
       <section className="form-section">
-        <h3 className="form-section-title">{t('backtest.range')}</h3>
-        <div className="field">
-          <div className="toolbar">
+        <div className="form-section-head">
+          <h3 className="form-section-title">{t('backtest.range')}</h3>
+          <div className="range-pills">
             {RANGE_PRESETS.map((years) => {
               const range = isoYearRange(years)
               const active = start === range.start && end === range.end
@@ -173,7 +161,7 @@ export function BacktestForm({
                 <button
                   key={years}
                   type="button"
-                  className={`btn btn-sm ${active ? 'btn-primary' : ''}`}
+                  className={`range-pill ${active ? 'active' : ''}`}
                   title={t('backtest.lastYears', { n: years })}
                   onClick={() => {
                     onStartChange(range.start)
@@ -211,7 +199,6 @@ export function BacktestForm({
       </section>
 
       <section className="form-section">
-        <h3 className="form-section-title">{t('backtest.cashAndCosts')}</h3>
         <div className="form-grid">
           <div className="field">
             <label htmlFor={`${idPrefix}-cash`}>{t('common.cash')}</label>

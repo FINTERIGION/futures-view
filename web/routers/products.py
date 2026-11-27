@@ -9,7 +9,7 @@ import os
 
 from fastapi import APIRouter, HTTPException, Query
 
-from datafeed.data_manager import DataManager
+from datafeed.data_manager import DataManager, normalize_series_name
 from datafeed.products import (
     DEFAULT_MAIN_MONTHS,
     DEFAULT_ROLL_LEAD_MONTHS,
@@ -133,14 +133,20 @@ def delete_product(code: str, purge_data: bool = Query(False)):
 
 
 @router.get('/products/{code}/bars')
-def product_bars(code: str, start: str = None, end: str = None):
+def product_bars(
+    code: str,
+    start: str = None,
+    end: str = None,
+    series: str = Query('weighted'),
+):
     code = normalize_symbol(code)
     try:
         get_product(code)
     except KeyError:
         raise HTTPException(status_code=404, detail=f'Unknown product {code!r}') from None
     try:
-        df = bars_cache.get(code, start, end)
+        norm_series = normalize_series_name(series)
+        df = bars_cache.get(code, start, end, series=norm_series)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -150,7 +156,7 @@ def product_bars(code: str, start: str = None, end: str = None):
         {'date': str(idx.date()), **{c: row[c] for c in df.columns}}
         for idx, row in df.iterrows()
     ]
-    return jsonable({'symbol': code, 'bars': rows})
+    return jsonable({'symbol': code, 'series': norm_series, 'bars': rows})
 
 
 @router.get('/products/{code}/roll')

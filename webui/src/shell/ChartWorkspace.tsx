@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { productsApi } from '../api/endpoints'
 import { AccessDrawer } from '../auth/AccessDrawer'
@@ -28,20 +28,11 @@ function CollapsedSidebarRail({ onExpand, universeCount }: { onExpand: () => voi
       >
         <Icon name="panel" />
       </button>
-      {/* The count is the reason to reopen the rail: it says how wide the next
-          backtest is without costing the chart 300px to find out. */}
       {universeCount > 0 && <span className="sidebar-rail-count">{universeCount}</span>}
     </div>
   )
 }
 
-/**
- * The whole screen: a top bar, the super chart filling the remaining width,
- * a product sidebar on the right, and a resizable tabbed drawer along the
- * bottom. Everything else in this app used to be four routed pages; this is
- * the single composition root that replaces them (see BottomDrawer,
- * SymbolSidebar, chart/SuperChart).
- */
 export function ChartWorkspace() {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
@@ -53,8 +44,11 @@ export function ChartWorkspace() {
     setSidebarOpen,
     drawerCollapsed,
     setDrawerCollapsed,
+    drawerMaximized,
     drawerHeight,
     chartSymbol,
+    chartSeries,
+    setChartSeries,
     universe,
     setRunId,
     editingProduct,
@@ -68,19 +62,25 @@ export function ChartWorkspace() {
   const chartedProduct = products?.find((p) => p.code === chartSymbol)
   const productName = chartedProduct ? (isZh ? chartedProduct.name_zh : chartedProduct.name) : undefined
 
-  // The search box belongs to a sibling subtree that may not even be mounted
-  // when the shortcut fires (a collapsed sidebar renders the rail instead), so
-  // this opens the sidebar and then finds the input in the DOM on the next
-  // frame. Threading a ref down through the workspace context for one
-  // keystroke would put a piece of imperative focus plumbing into the state
-  // every panel reads.
+  // When switching to a different product, gracefully fall back to weighted if
+  // the previously chosen month continuous series is not in the new product's
+  // main delivery months (e.g. SA m09 -> AU [6, 12]).
+  const prevSymbolRef = useRef(chartSymbol)
+  useEffect(() => {
+    if (prevSymbolRef.current === chartSymbol) return
+    prevSymbolRef.current = chartSymbol
+    if (!chartedProduct || !chartSeries.startsWith('m')) return
+    const monthNum = Number(chartSeries.slice(1))
+    const mainMonths = chartedProduct.roll?.main_months ?? []
+    if (mainMonths.length > 0 && !mainMonths.includes(monthNum)) {
+      setChartSeries('weighted')
+    }
+  }, [chartSymbol, chartSeries, chartedProduct, setChartSeries])
+
   const focusProductSearch = useCallback(() => {
     setSidebarOpen(true)
     requestAnimationFrame(() => {
       const input = document.querySelector<HTMLInputElement>('input[data-product-search]')
-      // Focus *and* select: focusing alone leaves the caret after whatever was
-      // typed last, so the shortcut would append to a stale filter instead of
-      // starting a new search.
       input?.focus()
       input?.select()
     })
@@ -94,11 +94,6 @@ export function ChartWorkspace() {
     '?': () => setShortcutsOpen(true),
   })
 
-  // Central completion observer for backtest & data jobs so outcomes are still
-  // handled (cache invalidation, run overlay, single toast) even when
-  // `BacktestPanel` or `SymbolSidebar` is unmounted behind a tab switch or
-  // collapsed pane. Shares `lifecycle` with those panels so remounting them
-  // never duplicates toasts or refetches.
   const backtestState = jobs.backtest.state
   useEffect(() => {
     if (!backtestState || !['done', 'error'].includes(backtestState.status)) return
@@ -145,18 +140,16 @@ export function ChartWorkspace() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [sidebarOpen, setSidebarOpen])
 
-  // The grid row must actually shrink on collapse, not just the drawer's own
-  // content -- otherwise the row stays reserved at the last resized height
-  // (drawerHeight) and the chart above never grows into the freed space.
   const style = {
-    '--sidebar-w': sidebarOpen ? '300px' : '44px',
-    '--drawer-h': drawerCollapsed ? '40px' : `${drawerHeight}px`,
+    '--sidebar-w': sidebarOpen ? '292px' : '42px',
+    '--drawer-h': drawerCollapsed ? '38px' : drawerMaximized ? '74vh' : `${drawerHeight}px`,
   } as CSSProperties
 
   return (
     <div className="workspace-root">
       <WorkspaceTopBar
         productName={productName}
+        onFocusSearch={focusProductSearch}
         onShowNotify={() => setNotifyOpen(true)}
         onShowShortcuts={() => setShortcutsOpen(true)}
         onShowAccess={() => setAccessOpen(true)}

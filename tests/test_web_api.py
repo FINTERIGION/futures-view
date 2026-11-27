@@ -1489,6 +1489,32 @@ def test_indicator_values_for_an_unknown_product_or_key(client, synthetic_bars):
     assert client.get('/api/products/SA/indicators/nope').status_code == 404
 
 
+def test_bars_and_indicators_accept_series_parameter(client, monkeypatch):
+    from tests.test_indicators_pkg import build_frame
+    import web.barscache as barscache_module
+
+    seen = []
+    frame = build_frame(n_bars=60)
+
+    def fake_get(symbol, start=None, end=None, series='weighted'):
+        seen.append((symbol, series))
+        return frame
+
+    monkeypatch.setattr(barscache_module.cache, 'get', fake_get)
+
+    resp = client.get('/api/products/SA/bars?series=main')
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['series'] == 'main'
+
+    resp = client.get('/api/products/SA/indicators/rsi?series=m01')
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['series'] == 'm01'
+    assert seen == [('SA', 'main'), ('SA', 'm01')]
+
+    assert client.get('/api/products/SA/bars?series=invalid').status_code == 400
+    assert client.get('/api/products/SA/indicators/rsi?series=m13').status_code == 400
+
+
 def _write_indicator(tmp_path, monkeypatch, name: str, body: str):
     """Drop a module into a throwaway directory appended to the package path,
     so a test can register an indicator without writing into ``indicators/``.

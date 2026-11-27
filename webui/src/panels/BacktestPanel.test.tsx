@@ -355,3 +355,71 @@ describe('the window presets', () => {
     }
   })
 })
+
+describe('backtest results hierarchy and trade-to-chart linkage', () => {
+  it('renders layered KPI stats, comparison table by symbol, and jumps to trade on row click', async () => {
+    const user = userEvent.setup()
+    vi.mocked(runsApi.get).mockResolvedValue({
+      id: 'run-rich',
+      kind: 'backtest',
+      created_at: 0,
+      strategy: 'DoubleMaStrategy',
+      symbols: ['SA', 'CF'],
+      start: '2024-01-01',
+      end: '2024-12-31',
+      cash: 100000,
+      slippage: 0,
+      status: 'done',
+      params: {},
+      metrics: {
+        total_return: 42.5,
+        max_drawdown: 8.2,
+        sharpe_ratio: 1.45,
+        win_rate: 55,
+        annualized_return: 21.2,
+        sortino_ratio: 2.1,
+        calmar_ratio: 2.5,
+        profit_factor: 1.8,
+        n_trades: 2,
+        final_equity: 142500,
+        turnover: 12,
+        expectancy: 500,
+        n_forced_liquidations: 0,
+        n_rejected_orders: 1,
+        by_symbol: {
+          SA: { n_trades: 2, win_rate: 100, net_pnl: 1200, expectancy: 600 },
+          CF: { n_trades: 2, win_rate: 0, net_pnl: -300, expectancy: -150 },
+        },
+      },
+      error: null,
+      equity_records: [],
+      trade_logs: [
+        {
+          trade_id: 1, open_date: '2024-03-01', close_date: '2024-03-15', direction: 'long',
+          symbol: 'CF', contract: 'CF405', contracts: 'CF405', n_rolls: 0,
+          open_price: 15000, close_price: 14940, size: 1, gross_pnl: -300, commission: 0, net_pnl: -300,
+          margin_used: 15000, open_at_end: false, forced: false, exit_reason: 'signal', open_bar: 10, close_bar: 20,
+        },
+      ],
+      deferred: {},
+      symbols_with_price: ['SA', 'CF'],
+    })
+
+    renderWorkspace(<BacktestPanel />, { path: '/?symbol=SA&run=run-rich' })
+
+    expect(await screen.findByText('42.50%')).toBeInTheDocument()
+    expect(document.querySelector('.kpi-hero')).not.toBeNull()
+    expect(document.querySelector('.kpi-secondary')).not.toBeNull()
+    expect(document.querySelector('.kpi-flag.is-alert')).toHaveTextContent('Rejected orders1')
+
+    // Click trade row highlights it
+    const cfTradeCell = screen.getByText('2024-03-01')
+    await user.click(cfTradeCell.closest('tr')!)
+    expect(cfTradeCell.closest('tr')).toHaveClass('row-open')
+
+    // Switch to By Symbol comparison table
+    await user.click(screen.getByRole('tab', { name: 'By Symbol' }))
+    expect(await screen.findByText('1,200')).toBeInTheDocument()
+    expect(screen.getByText('-300')).toBeInTheDocument()
+  })
+})

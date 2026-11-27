@@ -74,3 +74,41 @@ def test_a_dark_bar_carries_the_last_settle_and_flattens_to_the_last_close():
     assert (dark['open'], dark['high'], dark['low'], dark['close']) == (105.0, 105.0, 105.0, 105.0)
     assert dark['settle'] == 102.0
     assert dark['volume'] == 0.0 and dark['oi'] == 50.0
+
+
+def test_load_series_dataframe_supports_main_and_month_continuous(tmp_path, monkeypatch):
+    """Main continuous follows the product's roll calendar; month continuous
+    (e.g. m01/m06) stitches contracts of one delivery month and smoothly rolls
+    into next year's contract when overlap dates pass the roll date."""
+    import pytest
+
+    monkeypatch.setattr(DataManager, 'DATA_DIR', str(tmp_path))
+    rows = [
+        # SA main_months=(1, 5, 9), lead=1: March -> 05, April -> 09
+        {'date': '2025-03-31', 'contract': 'SA505', 'open': 1500, 'high': 1510, 'low': 1495, 'close': 1505, 'oi': 1000, 'volume': 500, 'settle': 1504},
+        {'date': '2025-03-31', 'contract': 'SA509', 'open': 1520, 'high': 1530, 'low': 1515, 'close': 1525, 'oi': 400, 'volume': 200, 'settle': 1524},
+        {'date': '2025-03-31', 'contract': 'SA601', 'open': 1560, 'high': 1570, 'low': 1555, 'close': 1565, 'oi': 120, 'volume': 60, 'settle': 1564},
+        {'date': '2025-04-01', 'contract': 'SA505', 'open': 1506, 'high': 1512, 'low': 1500, 'close': 1508, 'oi': 900, 'volume': 450, 'settle': 1507},
+        {'date': '2025-04-01', 'contract': 'SA509', 'open': 1526, 'high': 1536, 'low': 1520, 'close': 1532, 'oi': 550, 'volume': 300, 'settle': 1531},
+        {'date': '2025-04-01', 'contract': 'SA601', 'open': 1566, 'high': 1575, 'low': 1560, 'close': 1570, 'oi': 130, 'volume': 70, 'settle': 1569},
+        # Overlap for 05 month after roll date (2025-04-01 >= roll_date(2025-05, 1))
+        {'date': '2025-04-01', 'contract': 'SA605', 'open': 1600, 'high': 1610, 'low': 1595, 'close': 1605, 'oi': 50, 'volume': 20, 'settle': 1604},
+    ]
+    pd.DataFrame(rows).to_csv(tmp_path / 'SA.csv', index=False)
+
+    dm = DataManager(symbols=['SA'])
+    main_df = dm.load_series_dataframe(series='main', symbol='SA')
+    assert list(main_df['contract']) == ['SA505', 'SA509']
+    assert list(main_df['close']) == [1505.0, 1532.0]
+
+    m01_df = dm.load_series_dataframe(series='m01', symbol='SA')
+    assert list(m01_df['contract']) == ['SA601', 'SA601']
+    assert list(m01_df['close']) == [1565.0, 1570.0]
+
+    # On 2025-04-01 both SA505 (past roll date) and SA605 (pre roll date) print:
+    # m05 rolls cleanly into SA605.
+    m05_df = dm.load_series_dataframe(series='m05', symbol='SA')
+    assert list(m05_df['contract']) == ['SA505', 'SA605']
+
+    with pytest.raises(ValueError, match='Unsupported series'):
+        dm.load_series_dataframe(series='weekly', symbol='SA')

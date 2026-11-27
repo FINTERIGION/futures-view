@@ -106,7 +106,7 @@ export function RunHistory({
       // the deleted run in the results panel on the way out.
       render: (r) => (
         <button
-          className="btn btn-sm btn-danger btn-icon"
+          className="btn btn-sm btn-danger-ghost btn-icon"
           aria-label={t('common.delete')}
           onClick={(e) => {
             e.stopPropagation()

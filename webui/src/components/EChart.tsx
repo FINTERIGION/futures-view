@@ -31,9 +31,12 @@ echarts.use([
   CanvasRenderer,
 ])
 
-/** How many category ticks the option's (first) x-axis carries. Used only to
- * tell "the same series, redrawn" from "a different symbol/run, a different
- * date span" -- see `preserveDataZoom`. */
+export interface ZoomCommand {
+  start: number
+  end: number
+  seq: number
+}
+
 function categoryLength(option: EChartsOption): number {
   const xAxis = option.xAxis
   const first = Array.isArray(xAxis) ? xAxis[0] : xAxis
@@ -46,23 +49,16 @@ export function EChart({
   height = '100%',
   className,
   preserveDataZoom = false,
+  zoomCommand = null,
   onEvents,
 }: {
   option: EChartsOption
   height?: number | string
   className?: string
-  /** Keep the viewer's pan/zoom window across an option rebuild, as long as
-   * the x-axis has the same number of categories as last time.
-   * `setOption(..., { notMerge: true })` below resets the zoom to full view
-   * on every rebuild -- without this, toggling a chart pane, ticking a
-   * sidebar checkbox, or a live SSE progress frame would snap a zoomed-in
-   * super chart back out. A changed category count (a different symbol, a
-   * different date range) is treated as a new chart and is *not* restored:
-   * reapplying a stale window onto a shorter series would zoom into
-   * nothing. The remembered window lives in a ref owned by this component,
-   * not the chart instance, so it survives the dispose+re-init that a dark
-   * mode flip causes below. */
   preserveDataZoom?: boolean
+  /** Imperative zoom target (e.g. jump to a trade or backtest window) applied
+   * without mutating `option`, keeping `option` references stable. */
+  zoomCommand?: ZoomCommand | null
   onEvents?: Record<string, (params: unknown) => void>
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -70,22 +66,13 @@ export function EChart({
   const dark = useIsDarkMode()
   const zoomRef = useRef<{ start: number; end: number; len: number } | null>(null)
   const optionRef = useRef(option)
+  const lastZoomSeqRef = useRef<number>(0)
 
   useEffect(() => {
     if (!ref.current) return
-    // No named ECharts theme: every option this app builds
-    // (src/charts/*.ts) already embeds the validated light/dark colors from
-    // theme/palette.ts directly (background, text, axis, series), keyed by
-    // `dark`. Re-created on theme change since chart options aren't rebuilt
-    // by this component -- callers recompute `option` off the same signal.
     const chart = echarts.init(ref.current)
     chartRef.current = chart
 
-    // Coalesced into one `resize()` per animation frame: the bottom
-    // drawer's drag-to-resize handle changes this container's height on
-    // every pointermove, and a full candlestick re-layout on each of those
-    // is both wasted work and the usual source of ResizeObserver's own
-    // "loop completed with undelivered notifications" console warning.
     let rafId: number | null = null
     const observer = new ResizeObserver(() => {
       if (rafId !== null) return
@@ -120,6 +107,18 @@ export function EChart({
       }
     }
   }, [option, preserveDataZoom, dark])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !zoomCommand || zoomCommand.seq === lastZoomSeqRef.current) return
+    const len = categoryLength(optionRef.current)
+    if (len === 0) return
+    lastZoomSeqRef.current = zoomCommand.seq
+    const start = Math.max(0, Math.min(100, zoomCommand.start))
+    const end = Math.max(start, Math.min(100, zoomCommand.end))
+    zoomRef.current = { start, end, len }
+    chart.dispatchAction({ type: 'dataZoom', start, end })
+  }, [zoomCommand, option, dark])
 
   useEffect(() => {
     const chart = chartRef.current

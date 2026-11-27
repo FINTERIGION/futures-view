@@ -20,11 +20,13 @@ const SLOT_LABEL_KEY: Record<JobSlot, string> = {
 
 export function WorkspaceTopBar({
   productName,
+  onFocusSearch,
   onShowNotify,
   onShowShortcuts,
   onShowAccess,
 }: {
   productName?: string
+  onFocusSearch?: () => void
   onShowNotify: () => void
   onShowShortcuts: () => void
   onShowAccess: () => void
@@ -59,7 +61,7 @@ export function WorkspaceTopBar({
       <div className="topbar-inner">
         <span className="brand">
           <span className="brand-mark">
-            <Icon name="candles" size={15} />
+            <Icon name="candles" size={14} />
           </span>
           <span className="brand-name">FuturesView</span>
         </span>
@@ -67,18 +69,24 @@ export function WorkspaceTopBar({
         {chartSymbol && (
           <>
             <span className="topbar-divider" />
-            <span className="topbar-symbol">
+            <button
+              type="button"
+              className="topbar-symbol"
+              onClick={onFocusSearch}
+              title={t('workspace.switchProductHint')}
+              aria-label={`${chartSymbol}${productName ? ` ${productName}` : ''} — ${t('workspace.searchProducts')}`}
+            >
               <strong>{chartSymbol}</strong>
               {productName && <span className="topbar-symbol-name">{productName}</span>}
-            </span>
+              <kbd className="kbd" aria-hidden="true">
+                /
+              </kbd>
+            </button>
           </>
         )}
 
         <div className="spacer" />
 
-        {/* A job's own panel may be behind a collapsed drawer or a tab that is
-            not showing, so this is the one place its progress is always
-            visible. The bar carries the number; the label never reflows. */}
         <div className="topbar-jobs">
           {activePills.map(({ slot, state }) => (
             <button
@@ -114,7 +122,7 @@ export function WorkspaceTopBar({
             }
             aria-label={t('alerts.notify.topbarTitle')}
           >
-            <Icon name="bell" />
+            <Icon name="bell" size={15} />
             {schedule?.enabled && <span className="topbar-icon-dot" aria-hidden="true" />}
           </button>
 
@@ -124,7 +132,7 @@ export function WorkspaceTopBar({
             title={t('auth.access')}
             aria-label={t('auth.access')}
           >
-            <Icon name="lock" />
+            <Icon name="lock" size={15} />
           </button>
 
           <button
@@ -133,8 +141,10 @@ export function WorkspaceTopBar({
             title={t('workspace.shortcuts')}
             aria-label={t('workspace.shortcuts')}
           >
-            <Icon name="keyboard" />
+            <Icon name="keyboard" size={15} />
           </button>
+
+          <span className="topbar-control-sep" aria-hidden="true" />
 
           <ThemeToggle />
 

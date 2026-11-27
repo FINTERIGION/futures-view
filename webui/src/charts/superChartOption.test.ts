@@ -472,4 +472,33 @@ describe('superChartOption tooltip', () => {
     expect(html).not.toContain('<img')
     expect(html).toContain('&lt;img src=x&gt; V')
   })
+
+  it('derives roll boundaries from bar.contract transitions and localizes tooltip labels', () => {
+    const contractBars: Bar[] = [
+      { ...BARS[0], contract: 'SA505' },
+      { ...BARS[1], contract: 'SA505' },
+      { ...BARS[2], contract: 'SA509' },
+      { ...BARS[3], contract: 'SA509' },
+    ]
+    const option = superChartOption({
+      dark: false,
+      bars: contractBars,
+      signals: [
+        { date: '2024-01-03', direction: 'buy' },
+        { date: '2024-01-04', direction: 'sell' },
+      ],
+      labels: { open: '开盘', close: '收盘', low: '最低', high: '最高' },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const price = (option.series as any[])[0]
+    expect(price.markLine.data).toEqual([{ xAxis: '2024-01-04' }])
+    expect(price.markPoint.symbolSize).toBe(11)
+    expect(price.markPoint.data[0].coord).toEqual(['2024-01-03', 10]) // buy at low
+    expect(price.markPoint.data[1].coord).toEqual(['2024-01-04', 12.5]) // sell at high
+
+    const html = format(option, [{ ...candleParam, dataIndex: 2, axisValueLabel: '2024-01-04' }])
+    expect(html).toContain('SA509')
+    expect(html).toContain('>开盘<')
+    expect(html).toContain('>收盘<')
+  })
 })

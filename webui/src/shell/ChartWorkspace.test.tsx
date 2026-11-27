@@ -560,4 +560,33 @@ describe('a finished data update', () => {
     await user.keyboard('{Control>}{Enter}{/Control}')
     expect(backtestApi.start).not.toHaveBeenCalled()
   })
+
+  it('focuses search from topbar symbol click, filters sidebar, maximizes drawer, and bridges backtest <-> signals', async () => {
+    const user = userEvent.setup()
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA&tab=backtest' })
+
+    // Topbar symbol button focuses search
+    await screen.findByRole('listbox')
+    const topSymbolBtn = screen.getByRole('button', { name: /SA.*Search products/i })
+    await user.click(topSymbolBtn)
+    const search = screen.getByPlaceholderText('Search products…')
+    await waitFor(() => expect(search).toHaveFocus())
+
+    // Filter sidebar to Universe only (SA is checked, CF/AG are not)
+    await user.click(screen.getByRole('button', { name: /Universe \(1\)/ }))
+    const list = screen.getByRole('listbox')
+    expect(await findProductRow(list, 'SA')).toBeInTheDocument()
+    expect(Array.from(list.querySelectorAll('.product-row .code')).map((el) => el.textContent)).toEqual(['SA'])
+
+    // Maximize & restore bottom drawer
+    await user.click(screen.getByRole('button', { name: 'Maximize panel' }))
+    expect(screen.getByRole('button', { name: 'Restore panel height' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Restore panel height' }))
+    expect(screen.getByRole('button', { name: 'Maximize panel' })).toBeInTheDocument()
+
+    // Backtest -> Signals prefill
+    await user.click(screen.getByRole('button', { name: 'Create signal monitor from this configuration' }))
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Signals' })).toHaveAttribute('aria-selected', 'true'))
+    expect(await screen.findByText('New signal monitor')).toBeInTheDocument()
+  })
 })

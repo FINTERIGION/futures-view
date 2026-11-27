@@ -1,21 +1,35 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import type { BarSeries } from '../api/types'
 import { useStickyState } from '../hooks/useStickyState'
 import {
   WorkspaceContext,
+  type AlertPrefill,
   type BacktestPrefill,
+  type ChartFocusRange,
   type DrawerTab,
   type Sequenced,
   type WorkspaceState,
 } from './workspaceStore'
 
 const DRAWER_TABS: DrawerTab[] = ['alerts', 'backtest', 'runs']
+const SERIES_RE = /^(weighted|main|m(0[1-9]|1[0-2]))$/
+
+function parseBarSeries(raw: string | null): BarSeries | null {
+  if (!raw) return null
+  const norm = raw.trim().toLowerCase()
+  return SERIES_RE.test(norm) ? (norm as BarSeries) : null
+}
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [stickyChartSymbol, setStickyChartSymbol] = useStickyState('chartSymbol', 'SA')
   const chartSymbol = searchParams.get('symbol') ?? stickyChartSymbol
+
+  const [stickyChartSeries, setStickyChartSeries] = useStickyState<BarSeries>('chartSeries', 'weighted')
+  const seriesParam = parseBarSeries(searchParams.get('series'))
+  const chartSeries: BarSeries = seriesParam ?? (parseBarSeries(stickyChartSeries) ?? 'weighted')
 
   const [universe, setUniverse] = useStickyState<string[]>('universe', () => {
     try {
@@ -35,7 +49,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const tabParam = searchParams.get('tab')
   const drawerTab = tabParam && DRAWER_TABS.includes(tabParam as DrawerTab) ? (tabParam as DrawerTab) : stickyDrawerTab
 
-  const [drawerCollapsed, setDrawerCollapsed] = useStickyState('drawerCollapsed', false)
+  const [drawerCollapsed, setDrawerCollapsedRaw] = useStickyState('drawerCollapsed', false)
+  const [drawerMaximized, setDrawerMaximizedRaw] = useState(false)
   const [drawerHeight, setDrawerHeight] = useStickyState('drawerHeight', 360)
   const [sidebarOpen, setSidebarOpen] = useStickyState('sidebarOpen', true)
   const [showVolume, setShowVolume] = useStickyState('showVolume', true)
@@ -52,6 +67,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [indicatorParamsRaw],
   )
   const [editingProduct, setEditingProduct] = useState<string | 'new' | null>(null)
+  const [chartFocus, setChartFocus] = useState<Sequenced<ChartFocusRange> | null>(null)
+
+  const setDrawerCollapsed = useCallback(
+    (v: boolean) => {
+      setDrawerCollapsedRaw(v)
+      if (v) setDrawerMaximizedRaw(false)
+    },
+    [setDrawerCollapsedRaw],
+  )
+
+  const setDrawerMaximized = useCallback(
+    (v: boolean) => {
+      setDrawerMaximizedRaw(v)
+      if (v) setDrawerCollapsedRaw(false)
+    },
+    [setDrawerCollapsedRaw],
+  )
 
   const toggleIndicator = useCallback(
     (key: string) => {
@@ -59,6 +91,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
     [setIndicators],
   )
+
+  const clearIndicators = useCallback(() => {
+    setIndicators([])
+  }, [setIndicators])
 
   const setIndicatorParams = useCallback(
     (key: string, overrides: Record<string, unknown>) => {
@@ -85,8 +121,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       },
       { replace: true },
     )
-    // Runs once, at mount, deliberately -- this is a one-time seed of the
-    // address bar, not a sync that should re-fire on every sticky change.
+    // One-time seed of the address bar on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -102,6 +137,39 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         },
         { replace: true },
       )
+    },
+    [setStickyChartSymbol, setSearchParams],
+  )
+
+  const setChartSeries = useCallback(
+    (series: BarSeries) => {
+      const nextSeries = parseBarSeries(series) ?? 'weighted'
+      setStickyChartSeries(nextSeries)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (nextSeries === 'weighted') next.delete('series')
+          else next.set('series', nextSeries)
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setStickyChartSeries, setSearchParams],
+  )
+
+  const focusChartRange = useCallback(
+    (range: ChartFocusRange) => {
+      setStickyChartSymbol(range.symbol)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (range.symbol) next.set('symbol', range.symbol)
+          return next
+        },
+        { replace: true },
+      )
+      setChartFocus((prev) => ({ seq: (prev?.seq ?? 0) + 1, value: range }))
     },
     [setStickyChartSymbol, setSearchParams],
   )
@@ -171,10 +239,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [setStickyChartSymbol, setUniverse, setStickyDrawerTab, setDrawerCollapsed, setSearchParams],
   )
 
+  const [alertPrefill, setAlertPrefill] = useState<Sequenced<AlertPrefill> | null>(null)
+
+  const prefillAlert = useCallback(
+    (value: AlertPrefill) => {
+      setAlertPrefill((p) => ({ seq: (p?.seq ?? 0) + 1, value }))
+      setStickyDrawerTab('alerts')
+      setDrawerCollapsed(false)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.set('tab', 'alerts')
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setStickyDrawerTab, setDrawerCollapsed, setSearchParams],
+  )
+
   const value = useMemo<WorkspaceState>(
     () => ({
       chartSymbol,
       setChartSymbol,
+      chartSeries,
+      setChartSeries,
+      chartFocus,
+      focusChartRange,
       universe,
       setUniverse,
       toggleUniverse,
@@ -184,6 +275,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setDrawerTab,
       drawerCollapsed,
       setDrawerCollapsed,
+      drawerMaximized,
+      setDrawerMaximized,
       drawerHeight,
       setDrawerHeight,
       sidebarOpen,
@@ -192,16 +285,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setShowVolume,
       indicators,
       toggleIndicator,
+      clearIndicators,
       indicatorParams,
       setIndicatorParams,
       editingProduct,
       setEditingProduct,
       backtestPrefill,
       prefillBacktest,
+      alertPrefill,
+      prefillAlert,
     }),
     [
       chartSymbol,
       setChartSymbol,
+      chartSeries,
+      setChartSeries,
+      chartFocus,
+      focusChartRange,
       universe,
       setUniverse,
       toggleUniverse,
@@ -211,6 +311,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setDrawerTab,
       drawerCollapsed,
       setDrawerCollapsed,
+      drawerMaximized,
+      setDrawerMaximized,
       drawerHeight,
       setDrawerHeight,
       sidebarOpen,
@@ -219,11 +321,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setShowVolume,
       indicators,
       toggleIndicator,
+      clearIndicators,
       indicatorParams,
       setIndicatorParams,
       editingProduct,
       backtestPrefill,
       prefillBacktest,
+      alertPrefill,
+      prefillAlert,
     ],
   )
 

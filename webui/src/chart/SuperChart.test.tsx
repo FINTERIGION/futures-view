@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
-import { indicatorsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
+import { dataApi, indicatorsApi, productsApi, runsApi, strategiesApi } from '../api/endpoints'
 import type { IndicatorInfo, IndicatorValues } from '../api/types'
 import { EMPTY_BARS, INDICATORS, PRODUCTS, STRATEGIES, renderWorkspace } from '../test/utils'
 import { ChartWorkspace } from '../shell/ChartWorkspace'
@@ -353,5 +353,68 @@ describe('switching bottom drawer tabs', () => {
     await user.click(screen.getByRole('tab', { name: 'Backtest' }))
 
     expect(seenOptions.length).toBe(countAfterLoad)
+  })
+})
+
+describe('contract series switcher, indicator search, and direct download', () => {
+  it('switches between weighted, main, and month continuous series and refetches bars & indicators', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('ft.indicators', JSON.stringify(['rsi']))
+    vi.mocked(productsApi.bars).mockResolvedValue(EMPTY_BARS)
+    vi.mocked(indicatorsApi.values).mockResolvedValue({
+      symbol: 'SA',
+      indicator: 'rsi',
+      params: { period: 14 },
+      dates: [],
+      outputs: { rsi: { values: [], valid_from: 0 } },
+    })
+
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+    await waitFor(() => expect(productsApi.bars).toHaveBeenCalledWith('SA'))
+    await waitFor(() => expect(indicatorsApi.values).toHaveBeenCalledWith('SA', 'rsi', {}))
+
+    await user.click(screen.getByRole('button', { name: 'Main' }))
+    await waitFor(() => expect(productsApi.bars).toHaveBeenCalledWith('SA', undefined, undefined, 'main'))
+    await waitFor(() =>
+      expect(indicatorsApi.values).toHaveBeenCalledWith('SA', 'rsi', {}, undefined, undefined, 'main'),
+    )
+
+    await user.click(screen.getByRole('button', { name: '01' }))
+    await waitFor(() => expect(productsApi.bars).toHaveBeenCalledWith('SA', undefined, undefined, 'm01'))
+    await waitFor(() =>
+      expect(indicatorsApi.values).toHaveBeenCalledWith('SA', 'rsi', {}, undefined, undefined, 'm01'),
+    )
+
+    // Pick a non-main month via the dropdown popover
+    await user.click(screen.getByRole('button', { name: 'More delivery months' }))
+    const monthDialog = await screen.findByRole('dialog', { name: 'More delivery months' })
+    await user.click(within(monthDialog).getByRole('button', { name: '10' }))
+    await waitFor(() => expect(productsApi.bars).toHaveBeenCalledWith('SA', undefined, undefined, 'm10'))
+  })
+
+  it('filters indicators in the picker by search query', async () => {
+    const user = userEvent.setup()
+    vi.mocked(productsApi.bars).mockResolvedValue(EMPTY_BARS)
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+
+    await user.click(await screen.findByRole('button', { name: /^Indicators/ }))
+    const search = screen.getByRole('textbox', { name: 'Search indicators…' })
+    await user.type(search, 'rsi')
+
+    const menu = screen.getByRole('dialog', { name: 'Indicators' })
+    expect(within(menu).getByText('RSI')).toBeInTheDocument()
+    expect(within(menu).queryByText('MA')).not.toBeInTheDocument()
+  })
+
+  it('lets the user download missing history directly from the chart empty state', async () => {
+    const user = userEvent.setup()
+    vi.mocked(productsApi.bars).mockRejectedValue(new ApiError(404, 'Weighted data file not found'))
+    vi.mocked(dataApi.update).mockResolvedValue({ job_id: 'dl-sa' })
+    renderWorkspace(<ChartWorkspace />, { path: '/?symbol=SA' })
+
+    const chartArea = document.querySelector('.chart-area') as HTMLElement
+    const btn = await within(chartArea).findByRole('button', { name: 'Download SA history' })
+    await user.click(btn)
+    await waitFor(() => expect(dataApi.update).toHaveBeenCalledWith(['SA'], false, false))
   })
 })

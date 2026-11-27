@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorMessage } from '../api/client'
 import { indicatorsApi } from '../api/endpoints'
-import type { IndicatorInfo } from '../api/types'
+import type { BarSeries, IndicatorInfo } from '../api/types'
 import { editableParams, parseParam, type ParamError, type ParamOverrides } from './indicatorParams'
 
 const ERROR_KEYS: Record<ParamError, string> = {
@@ -14,28 +14,18 @@ const ERROR_KEYS: Record<ParamError, string> = {
   choice: 'workspace.paramNotAChoice',
 }
 
-/**
- * One indicator's params, edited inline under its row in the picker.
- *
- * A value is checked twice before it is kept. First here, against the kind
- * and range the catalog declares, so an out-of-range period is flagged on
- * its own field. Then, when a product is charted, by the values route
- * itself, because a class's `constraints` (`fast < slow`) are Python and
- * only the server can run them. A refusal stays in the editor with the
- * server's message instead of being saved and blanking the chart. A success
- * is seeded into the query cache under the key `SuperChart` will ask for, so
- * the chart redraws without fetching the same values twice.
- */
 export function IndicatorParamsEditor({
   info,
   overrides,
   chartSymbol,
+  chartSeries = 'weighted',
   onApply,
   onCancel,
 }: {
   info: IndicatorInfo
   overrides: ParamOverrides
   chartSymbol: string
+  chartSeries?: BarSeries
   onApply: (overrides: ParamOverrides) => void
   onCancel: () => void
 }) {
@@ -52,7 +42,10 @@ export function IndicatorParamsEditor({
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, ParamError>>>({})
 
   const check = useMutation({
-    mutationFn: (next: ParamOverrides) => indicatorsApi.values(chartSymbol, info.key, next),
+    mutationFn: (next: ParamOverrides) =>
+      chartSeries === 'weighted'
+        ? indicatorsApi.values(chartSymbol, info.key, next)
+        : indicatorsApi.values(chartSymbol, info.key, next, undefined, undefined, chartSeries),
   })
 
   useEffect(() => {
@@ -77,19 +70,13 @@ export function IndicatorParamsEditor({
     setFieldErrors(errors)
     if (Object.keys(errors).length > 0) return
 
-    // Nothing charted means nothing to check against. The range checks above
-    // still ran, and a constraint the values break shows up in the chart's
-    // banner once a product is charted, with a reset button beside it.
     if (!chartSymbol) {
       onApply(next)
       return
     }
-    // Per-call callbacks rather than the hook's own: they are dropped if
-    // the menu closes while the check is in flight, so a user who clicked
-    // away does not have the edit saved anyway a moment later.
     check.mutate(next, {
       onSuccess: (values) => {
-        queryClient.setQueryData(['indicator', chartSymbol, info.key, next], values)
+        queryClient.setQueryData(['indicator', chartSymbol, chartSeries, info.key, next], values)
         onApply(next)
       },
     })

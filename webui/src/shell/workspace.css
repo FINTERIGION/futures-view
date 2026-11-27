@@ -1,9 +1,5 @@
 /* ============================================================================
-   The chart workspace shell: top bar, main chart, right product sidebar,
-   bottom drawer.
-
-   Tokens come from index.css; two more are set inline from React state --
-   --sidebar-w and --drawer-h -- because they are dragged/toggled at runtime.
+   Workspace shell: top bar, main chart, right product sidebar, bottom drawer.
    ============================================================================ */
 
 .workspace-root {
@@ -18,13 +14,9 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr var(--sidebar-w, 300px);
+  grid-template-columns: 1fr var(--sidebar-w, 292px);
   grid-template-rows: 1fr var(--drawer-h, 360px);
   background: var(--bg);
-  /* Collapsing the sidebar or the drawer animates the grid track itself, so
-     the chart grows into the freed space instead of snapping. Suppressed
-     mid-drag (see .drawer-resizing) -- a transition on a value the pointer is
-     already driving lags behind the cursor. */
   transition: grid-template-columns var(--dur-2) var(--ease),
     grid-template-rows var(--dur-2) var(--ease);
 }
@@ -34,7 +26,7 @@ body.drawer-resizing .workspace {
 }
 
 /* ============================================================================
-   Top bar
+   Top bar (sleek 44px chrome)
    ============================================================================ */
 
 .topbar {
@@ -48,17 +40,17 @@ body.drawer-resizing .workspace {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  height: 48px;
+  height: 44px;
   padding: 0 var(--sp-3);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 7px;
   font-weight: 650;
   font-size: var(--fs-md);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--text);
   white-space: nowrap;
   user-select: none;
@@ -68,37 +60,45 @@ body.drawer-resizing .workspace {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   background: var(--accent);
   color: var(--accent-fg);
-  box-shadow: var(--shadow-sm);
 }
 
 .topbar-divider {
   width: 1px;
-  height: 20px;
+  height: 16px;
   background: var(--border);
-  margin: 0 var(--sp-1);
+  margin: 0 2px;
 }
 
-/* The charted product, named in the one place that is always on screen. */
+/* Interactive symbol trigger: clicking focuses product search immediately. */
 .topbar-symbol {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  padding: 3px var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+  color: var(--text);
   font-size: var(--fs-sm);
   max-width: 260px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+
+.topbar-symbol:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
 
 .topbar-symbol strong {
   font-family: var(--mono);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -114,25 +114,29 @@ body.drawer-resizing .workspace {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 4px;
   min-width: 0;
 }
 
 .topbar-actions {
   flex: 0 0 auto;
-  padding-left: var(--sp-1);
+  padding-left: var(--sp-2);
   border-left: 1px solid var(--border);
 }
 
-/* A job running somewhere off screen. The bar under the label carries the
-   progress, so the pill does not have to re-flow as the percentage climbs
-   through its digits. */
+.topbar-control-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 3px;
+}
+
 .job-pill {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-width: 108px;
-  padding: 3px var(--sp-2) 4px;
+  min-width: 104px;
+  padding: 3px 8px 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -144,7 +148,7 @@ body.drawer-resizing .workspace {
 }
 
 .job-pill:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-border);
   background: var(--accent-bg);
 }
 
@@ -164,11 +168,11 @@ body.drawer-resizing .workspace {
 }
 
 .job-pill .progress-bar {
-  height: 3px;
+  height: 2.5px;
 }
 
 /* ============================================================================
-   Chart area
+   Chart area & purposeful single-row control bar
    ============================================================================ */
 
 .chart-area {
@@ -187,31 +191,218 @@ body.drawer-resizing .workspace {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
+  min-height: 38px;
+  padding: 5px var(--sp-3);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
-.chart-symbol-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  min-width: 0;
+/* Contract series selector (Weighted / Main / 01 / 05 / 09 ...) */
+.series-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  flex: 0 0 auto;
 }
 
-.chart-symbol-title strong {
-  font-family: var(--mono);
-  font-size: var(--fs-base);
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.chart-symbol-name {
+.series-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
   color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.series-btn:hover:not(.active) {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.series-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.series-more {
+  position: relative;
+}
+
+.series-more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--z-pop);
+  min-width: 176px;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  animation: pop-down var(--dur-1) var(--ease);
+}
+
+.series-more-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.series-month-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.series-month-opt {
+  min-height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+
+.series-month-opt:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.series-month-opt.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Latest daily bar HUD strip */
+.chart-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.chart-hud-contract {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.chart-hud-price {
+  font-family: var(--mono);
   font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.chart-hud-change {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.chart-hud-change.is-up { color: var(--up); }
+.chart-hud-change.is-down { color: var(--down); }
+
+.chart-hud-date {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+
+/* Active indicator quick chips on chart toolbar */
+.chart-ind-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-ind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+
+.chart-ind-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+/* Active backtest overlay pill */
+.run-overlay-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--h-sm);
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.run-overlay-name {
+  font-family: var(--mono);
+  font-weight: 600;
+  max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-overlay-select {
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
 }
 
 .super-chart-canvas {
@@ -220,16 +411,9 @@ body.drawer-resizing .workspace {
 }
 
 .drawer-resizing .super-chart-canvas {
-  /* Dragging the drawer's handle changes this pane's height continuously;
-   * suppressing chart interaction for the duration keeps a stray hover from
-   * fighting the resize (the ResizeObserver in EChart still keeps the
-   * canvas in sync, rAF-coalesced -- see components/EChart.tsx). */
   pointer-events: none;
 }
 
-/* Banners stacked over the chart (a run that misses this symbol, an indicator
-   that would not compute) share one gutter rather than each carrying its own
-   inline margin. */
 .chart-notices {
   flex: 0 0 auto;
   padding: var(--sp-2) var(--sp-3) 0;
@@ -247,26 +431,23 @@ body.drawer-resizing .workspace {
   position: relative;
 }
 
-/* Sized to its widest row. Left to shrink-to-fit, an absolute box inside the
-   picker gets only the button's width to fit into, so it sat at min-width
-   whatever the labels said -- and with the shorter Chinese button and wider
-   pane badge, that cut names off mid-word. */
 .indicator-menu {
   position: absolute;
   top: calc(100% + var(--sp-1));
   right: 0;
   z-index: var(--z-pop);
   width: max-content;
-  min-width: 268px;
+  min-width: 288px;
   max-width: min(440px, calc(100vw - 32px));
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: var(--sp-1);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   animation: pop-down var(--dur-2) var(--ease);
+  overflow: hidden;
 }
 
 @keyframes pop-down {
@@ -275,21 +456,30 @@ body.drawer-resizing .workspace {
 }
 
 .indicator-menu-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2) var(--sp-2);
-  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2) var(--sp-2) 6px;
   font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
-/* Splits the picker the way the chart is split: what draws over the candles
-   above, what takes a pane of its own below. */
+.indicator-menu-search {
+  flex: 0 0 auto;
+  padding: 0 var(--sp-2) var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.indicator-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-1);
+}
+
 .indicator-menu-rule {
   margin: var(--sp-1) var(--sp-2);
   border-top: 1px solid var(--border);
@@ -301,9 +491,6 @@ body.drawer-resizing .workspace {
   color: var(--text-muted);
 }
 
-/* The row holds two controls side by side -- the tick box's label and the
-   params pencil -- because a button nested inside a <label> is invalid and
-   would toggle the box when clicked. */
 .indicator-row {
   display: flex;
   align-items: center;
@@ -322,8 +509,8 @@ body.drawer-resizing .workspace {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2);
-  font-size: var(--fs-md);
+  padding: 6px var(--sp-2);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -335,10 +522,6 @@ body.drawer-resizing .workspace {
   white-space: nowrap;
 }
 
-/* The effective params, "9, 3, 3" -- accent-coloured once any differ from
-   the class's defaults, so a customised row is visible without opening it.
-   At max-width it gives way first: the name says what the row is, the params
-   are one pencil-click away. */
 .indicator-row-params {
   flex: 1 1000 auto;
   min-width: 0;
@@ -351,21 +534,19 @@ body.drawer-resizing .workspace {
 }
 
 .indicator-row-params.is-custom {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .indicator-row-pane {
   margin-left: auto;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-faint);
-  padding: 0 var(--sp-1);
+  padding: 0 5px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
   background: var(--surface-2);
 }
 
-/* Revealed on hover, like a product row's actions. The empty slot on a row
-   without one keeps every pane badge in the same column. */
 .indicator-row-edit,
 .indicator-row-edit-slot {
   flex: none;
@@ -376,21 +557,23 @@ body.drawer-resizing .workspace {
   width: var(--h-sm);
 }
 
+/* Faintly visible at rest so users discover parameters are editable. */
 .indicator-row-edit {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-1) var(--ease);
+  opacity: 0.35;
+  transition: opacity var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.indicator-row-edit.is-custom {
+  opacity: 0.85;
+  color: var(--accent-text);
 }
 
 .indicator-row:hover .indicator-row-edit,
 .indicator-row:focus-within .indicator-row-edit,
 .indicator-row.is-editing .indicator-row-edit {
   opacity: 1;
-  pointer-events: auto;
 }
 
-/* A broken class stays listed, disabled, with its error on hover -- an
-   indicator that silently vanished mid-edit is the harder thing to debug. */
 .indicator-row.is-broken {
   opacity: 0.6;
 }
@@ -404,15 +587,13 @@ body.drawer-resizing .workspace {
   color: var(--danger);
 }
 
-/* Takes the width the rows gave the menu rather than adding its own: the
-   inputs' intrinsic width would otherwise widen the menu when it opens. */
 .indicator-params {
   contain: inline-size;
   margin: var(--sp-1) var(--sp-1) var(--sp-2);
   padding: var(--sp-2) var(--sp-2) var(--sp-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--surface-2);
 }
 
 .indicator-params-grid {
@@ -425,13 +606,9 @@ body.drawer-resizing .workspace {
   margin-bottom: var(--sp-2);
 }
 
-/* Param names are Python identifiers, the same ones `--param` takes, so they
-   are shown as written rather than upper-cased like the form labels. */
 .indicator-params .field label {
   font-family: var(--mono);
   font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
   color: var(--text-muted);
 }
 
@@ -482,26 +659,22 @@ body.drawer-resizing .workspace {
   border-left: 1px solid var(--border);
 }
 
-/* The collapsed rail still says how many products are in the universe -- the
-   number is the reason to open it again. */
 .sidebar-rail-count {
   font-size: var(--fs-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .sidebar-header {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-2);
+  gap: 4px;
+  padding: 6px var(--sp-2);
   border-bottom: 1px solid var(--border);
 }
 
-/* Search box: the magnifier sits inside the field, and a clear button
-   appears only once there is something to clear. */
 .search {
   position: relative;
   flex: 1 1 auto;
@@ -512,7 +685,7 @@ body.drawer-resizing .workspace {
 
 .search-icon {
   position: absolute;
-  left: var(--sp-2);
+  left: 8px;
   display: flex;
   color: var(--text-faint);
   pointer-events: none;
@@ -521,13 +694,13 @@ body.drawer-resizing .workspace {
 .sidebar-search {
   width: 100%;
   min-width: 0;
-  min-height: var(--h-md);
-  padding: 0 28px 0 28px;
+  min-height: var(--h-sm);
+  padding: 0 26px 0 26px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease),
     background var(--dur-1) var(--ease);
 }
@@ -540,17 +713,17 @@ body.drawer-resizing .workspace {
   outline: none;
   background: var(--surface);
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  box-shadow: 0 0 0 2.5px var(--accent-ring);
 }
 
 .search-clear {
   position: absolute;
-  right: var(--sp-1);
+  right: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: none;
   border-radius: var(--radius-pill);
@@ -564,24 +737,62 @@ body.drawer-resizing .workspace {
   color: var(--text);
 }
 
-/* A `/` hint parked in the empty field, so the shortcut is discoverable
-   without a manual. Hidden the moment the field has focus or content. */
 .search-hint {
   position: absolute;
-  right: var(--sp-2);
+  right: 6px;
   pointer-events: none;
+}
+
+/* Filter strip + bulk selection controls */
+.sidebar-filters {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px var(--sp-2) 0;
+}
+
+.sidebar-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+
+.sidebar-filter-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.sidebar-filter-btn.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.sidebar-filter-warn {
+  color: var(--warning);
 }
 
 .sidebar-meta {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
+  gap: 6px;
+  padding: 5px var(--sp-2) 6px 10px;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-xs);
   color: var(--text-faint);
-  background: var(--surface-2);
 }
 
 .sidebar-list {
@@ -594,8 +805,7 @@ body.drawer-resizing .workspace {
 .sidebar-action,
 .sidebar-clear {
   min-height: 20px;
-  margin: -3px 0;
-  padding: 0 var(--sp-1);
+  padding: 0 5px;
   font-size: var(--fs-xs);
 }
 
@@ -609,18 +819,18 @@ body.drawer-resizing .workspace {
   background: var(--surface);
 }
 
-/* ---------- One product row ---------- */
+/* ---------- Product row ---------- */
 
 .product-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: 6px var(--sp-2) 6px var(--sp-1);
-  margin: 0 var(--sp-1);
+  gap: 7px;
+  padding: 5px 8px 5px 7px;
+  margin: 1px 6px;
   border-radius: var(--radius-sm);
-  border-left: 3px solid transparent;
   cursor: pointer;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   transition: background var(--dur-1) var(--ease);
 }
 
@@ -628,8 +838,6 @@ body.drawer-resizing .workspace {
   background: var(--surface-2);
 }
 
-/* Universe membership is an independent native checkbox; the row itself
-   charts the product. */
 .universe-toggle {
   position: relative;
   flex: 0 0 auto;
@@ -642,14 +850,14 @@ body.drawer-resizing .workspace {
 .universe-toggle input {
   position: absolute;
   inset: 0;
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   margin: 0;
   opacity: 0;
 }
 
 .universe-toggle input:focus-visible + .universe-box {
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  box-shadow: 0 0 0 2.5px var(--accent-ring);
 }
 
 .universe-toggle input:disabled {
@@ -661,8 +869,8 @@ body.drawer-resizing .workspace {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--surface);
@@ -677,24 +885,24 @@ body.drawer-resizing .workspace {
   color: var(--accent-fg);
 }
 
-/* Where Enter would land while the search box has the keyboard. A ring, not
-   a fill: the row may also be charted or in the universe, and this must not
-   be mistaken for either. */
 .product-row.is-active {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .product-row.is-charted {
   background: var(--accent-bg);
-  border-left-color: var(--accent);
+}
+
+.product-row.is-charted .code {
+  color: var(--accent-text);
 }
 
 .product-row .code {
   font-family: var(--mono);
-  font-weight: 700;
+  font-weight: 650;
   font-size: var(--fs-sm);
-  letter-spacing: 0.02em;
-  min-width: 30px;
+  letter-spacing: 0.01em;
+  min-width: 26px;
 }
 
 .product-row .name {
@@ -704,11 +912,23 @@ body.drawer-resizing .workspace {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
 }
 
-/* Coverage, as a dot rather than a word: three states in a 240px row, read
-   at a glance down the column. The title attribute carries the detail. */
+.product-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.product-row-date {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 .product-row .coverage-dot {
   flex: 0 0 auto;
   width: 6px;
@@ -720,15 +940,30 @@ body.drawer-resizing .workspace {
 .coverage-dot.is-stale { background: var(--warning); }
 .coverage-dot.is-empty {
   background: transparent;
-  border: 1px solid var(--border-strong);
+  border: 1.5px solid var(--border-strong);
 }
 
 .product-row .row-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 2px;
+  padding-left: 8px;
+  background: linear-gradient(90deg, transparent, var(--surface-2) 22%);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-1) var(--ease);
+}
+
+.product-row.is-charted .row-actions {
+  background: linear-gradient(90deg, transparent, var(--surface) 22%);
+}
+
+.product-row:hover .product-row-meta,
+.product-row:focus-within .product-row-meta {
+  opacity: 0;
 }
 
 .product-row:hover .row-actions,
@@ -737,7 +972,6 @@ body.drawer-resizing .workspace {
   pointer-events: auto;
 }
 
-/* Loading placeholders, shaped like the rows they stand in for. */
 .product-row-skeleton {
   display: flex;
   align-items: center;
@@ -766,7 +1000,7 @@ body.drawer-resizing .workspace {
 }
 
 .bdrawer-collapsed {
-  height: 40px;
+  height: 38px;
 }
 
 .bdrawer-collapsed .bdrawer-tabbar {
@@ -783,8 +1017,6 @@ body.drawer-resizing .workspace {
   padding-bottom: var(--sp-1);
 }
 
-/* The drag handle straddles the drawer's top edge. Invisible until pointed
-   at or focused, so it does not draw a second border under the chart. */
 .bdrawer-handle {
   position: absolute;
   top: -4px;
@@ -793,7 +1025,7 @@ body.drawer-resizing .workspace {
   height: 9px;
   cursor: row-resize;
   touch-action: none;
-  z-index: 1;
+  z-index: 2;
   border: none;
   padding: 0;
   background: transparent;
@@ -828,10 +1060,16 @@ body.drawer-resizing .bdrawer-handle::after {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   padding: 0 var(--sp-2);
   border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--surface);
+}
+
+.bdrawer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .bdrawer-toggle svg {
@@ -849,49 +1087,80 @@ body.drawer-resizing .bdrawer-handle::after {
   padding: var(--sp-3);
 }
 
-/* ---------- Drawer contents ---------- */
+/* Backtest split owns its own independent left/right scrolling regions. */
+.bdrawer-body.is-split {
+  overflow: hidden;
+  padding: 0;
+}
+
+/* ---------- Independent 2-column backtest split ---------- */
 
 .panel-split {
   display: grid;
-  grid-template-columns: minmax(250px, 300px) 1fr;
-  gap: var(--sp-4);
-  align-items: start;
-  min-height: 100%;
+  grid-template-columns: minmax(264px, 304px) 1fr;
+  height: 100%;
+  min-height: 0;
 }
 
-/* The run form reads as a panel of its own against the results beside it --
-   without the surface, the two columns ran together into one grey field. */
 .panel-rail {
   min-width: 0;
-  padding: var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
   background: var(--surface-2);
+  overflow: hidden;
+}
+
+.panel-rail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
 }
 
 .panel-main {
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
 }
 
+/* Compact streamlined backtest form */
 .backtest-form {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: 10px;
 }
 
 .form-section + .form-section {
-  padding-top: var(--sp-3);
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 
+.form-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: 6px;
+}
+
 .form-section-title {
-  margin: 0 0 var(--sp-2);
+  margin: 0;
   color: var(--text-muted);
   font-size: var(--fs-xs);
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.strategy-params .field label {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
 }
 
 .field-label-row {
@@ -899,77 +1168,188 @@ body.drawer-resizing .bdrawer-handle::after {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
+  margin-bottom: 4px;
 }
 
-.field-label-row .btn {
-  margin-top: calc(-1 * var(--sp-1));
+.range-pills {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.range-pill {
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+
+.range-pill:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.range-pill.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  font-weight: 600;
 }
 
 .universe-chip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-1);
-  margin-bottom: var(--sp-2);
+  gap: 4px;
 }
 
 .universe-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
-  min-height: 24px;
-  padding: 0 var(--sp-2);
-  border: 1px solid var(--border);
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--text-muted);
   font-family: var(--mono);
   font-size: var(--fs-xs);
   cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
 
 button.universe-chip:hover {
-  border-color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   background: var(--danger-bg);
   color: var(--danger);
 }
 
-.universe-chip.is-locked {
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
-  background: var(--accent-bg);
-  color: var(--accent);
-  cursor: default;
-}
-
+/* Sticky bottom dock: Run Backtest is permanently visible without scrolling */
 .backtest-run-dock {
-  margin-top: var(--sp-1);
-  padding-top: var(--sp-3);
+  flex: 0 0 auto;
+  padding: 9px 12px;
   border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .backtest-run-summary {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: var(--sp-2);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }
 
 .backtest-run-summary .num {
   color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.backtest-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .run-block-reason {
-  margin: var(--sp-2) 0 0;
+  margin: 0;
   color: var(--warning);
   font-size: var(--fs-xs);
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
-.job-progress-block,
-.result-equity,
+.job-progress-block {
+  margin-top: var(--sp-2);
+}
+
+/* ---------- Result analysis area ---------- */
+
+.result-context-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.result-context-strategy {
+  font-family: var(--mono);
+  font-weight: 650;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.result-context-window {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+
+.result-symbol-pills {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.result-symbol-pill {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--dur-1) var(--ease);
+}
+
+.result-symbol-pill:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.result-symbol-pill.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.result-equity {
+  margin-top: var(--sp-3);
+}
+
 .result-details {
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-3);
+}
+
+.result-trade-filter {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.trade-row-clickable {
+  cursor: pointer;
 }
 
 /* ============================================================================
@@ -987,7 +1367,7 @@ button.universe-chip:hover {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1005,19 +1385,16 @@ button.universe-chip:hover {
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr min(var(--drawer-h, 360px), 50vh);
+    grid-template-rows: 1fr min(var(--drawer-h, 360px), 55vh);
   }
 
-  /* The sidebar overlays the chart instead of squeezing it -- at this width
-   * a permanent 300px column would leave the chart with nothing to draw
-   * in. */
   .sidebar-backdrop {
     position: fixed;
-    inset: 48px 0 0;
+    inset: 44px 0 0;
     display: block;
     padding: 0;
     border: none;
-    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    background: rgba(9, 11, 16, 0.45);
     backdrop-filter: blur(2px);
     z-index: var(--z-backdrop);
     cursor: default;
@@ -1025,7 +1402,7 @@ button.universe-chip:hover {
 
   .sidebar {
     position: fixed;
-    top: 48px;
+    top: 44px;
     right: 0;
     bottom: 0;
     width: min(320px, 86vw);
@@ -1037,7 +1414,7 @@ button.universe-chip:hover {
 
   .sidebar-rail {
     position: fixed;
-    top: 48px;
+    top: 44px;
     right: 0;
     bottom: 0;
     grid-column: unset;
@@ -1045,7 +1422,15 @@ button.universe-chip:hover {
     z-index: var(--z-pop);
   }
 
+  .product-row .product-row-meta {
+    display: none;
+  }
+
   .product-row .row-actions {
+    position: static;
+    transform: none;
+    background: none;
+    padding-left: 0;
     opacity: 1;
     pointer-events: auto;
   }
@@ -1055,8 +1440,38 @@ button.universe-chip:hover {
     grid-column: 1;
   }
 
+  .chart-hud-date,
+  .chart-ind-chips {
+    display: none;
+  }
+
+  .bdrawer-body.is-split {
+    overflow: auto;
+    padding: var(--sp-2);
+  }
+
   .panel-split {
     grid-template-columns: 1fr;
+    height: auto;
+    gap: var(--sp-3);
+  }
+
+  .panel-rail {
+    height: auto;
+    border-right: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: visible;
+  }
+
+  .panel-rail-scroll {
+    overflow: visible;
+  }
+
+  .panel-main {
+    height: auto;
+    overflow: visible;
+    padding: 0;
   }
 
   .topbar-symbol {
@@ -1087,19 +1502,16 @@ button.universe-chip:hover {
   }
 
   .brand-name,
-  .topbar-divider {
+  .topbar-divider,
+  .chart-hud {
     display: none;
   }
 
   .topbar-actions {
-    gap: var(--sp-1);
+    gap: 2px;
   }
 
   .bdrawer-body {
-    padding: var(--sp-2);
-  }
-
-  .panel-rail {
     padding: var(--sp-2);
   }
 

@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { errorMessage } from '../api/client'
 import { productsApi } from '../api/endpoints'
-import type { Product, ProductInput } from '../api/types'
-import { candlestickOption } from '../charts/builders'
+import type { Coverage, Product, ProductInput } from '../api/types'
 import { useJobs } from '../shell/jobsStore'
 import { useOptionalWorkspace } from '../shell/workspaceStore'
-import { useIsDarkMode } from '../theme/useIsDarkMode'
 
 export type CommissionMode = 'rate' | 'per_lot'
 
@@ -135,15 +133,12 @@ export interface ProductFormHandle {
   saving: boolean
   remove: () => void
   deleting: boolean
-  barsLoading: boolean
-  barsError: boolean
-  chartOption: ReturnType<typeof candlestickOption> | null
+  coverage: Coverage | null
   lockedByJob: boolean
 }
 
 export function useProductForm(code: string | null, onClose: () => void): ProductFormHandle {
   const isEdit = code !== null
-  const dark = useIsDarkMode()
   const jobs = useJobs()
   const queryClient = useQueryClient()
   const workspace = useOptionalWorkspace()
@@ -233,26 +228,6 @@ export function useProductForm(code: string | null, onClose: () => void): Produc
     onError: (err) => setFormError(errorMessage(err)),
   })
 
-  const { data: barsData, isLoading: barsLoading, isError: barsError } = useQuery({
-    queryKey: ['product-bars', code],
-    queryFn: () => productsApi.bars(code as string),
-    enabled: isEdit,
-    retry: false,
-  })
-  const { data: rollData } = useQuery({
-    queryKey: ['product-roll', code],
-    queryFn: () => productsApi.roll(code as string),
-    enabled: isEdit,
-    retry: false,
-  })
-
-  const bars = barsData?.bars
-  const roll = rollData?.roll
-  const chartOption = useMemo(
-    () => (bars && bars.length > 0 ? candlestickOption(dark, bars, { roll }) : null),
-    [dark, bars, roll],
-  )
-
   return {
     isEdit,
     form,
@@ -268,9 +243,7 @@ export function useProductForm(code: string | null, onClose: () => void): Produc
     saving: saveMutation.isPending,
     remove: () => deleteMutation.mutate(),
     deleting: deleteMutation.isPending,
-    barsLoading,
-    barsError,
-    chartOption,
+    coverage: product?.coverage ?? null,
     lockedByJob,
   }
 }
